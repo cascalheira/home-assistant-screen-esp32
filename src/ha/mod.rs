@@ -8,6 +8,7 @@
 //! password is never stored.
 
 pub mod auth;
+mod cache;
 pub mod model;
 mod ws;
 
@@ -158,10 +159,13 @@ fn parse_sha256(hex: &str) -> Option<[u8; 32]> {
 
 /// Starts the Home Assistant worker. `screen_id` is the MAC address as 12
 /// upper-case hex digits.
+/// With `sd_card`, the last layout and states are cached on the card (see
+/// cache.rs).
 pub fn start(
     nvs_partition: EspDefaultNvsPartition,
     screen_id: String,
     updates: Sender<crate::ota::Status>,
+    sd_card: bool,
 ) -> Result<HaHandle> {
     let nvs = EspNvs::new(nvs_partition, NVS_NAMESPACE, true)?;
     let stored = load(&nvs);
@@ -192,6 +196,7 @@ pub fn start(
         backoff: 0,
         mfa: None,
         mdns: None,
+        cache: sd_card.then(cache::Cache::default),
     };
     thread::Builder::new()
         .name("ha".into())
@@ -261,11 +266,23 @@ struct Worker {
     /// Base URL and flow id of a login waiting for its second factor.
     mfa: Option<(String, String)>,
     mdns: Option<EspMdns>,
+    /// Layout and states on the SD card; None without a card.
+    cache: Option<cache::Cache>,
 }
 
 impl Worker {
     fn run(mut self, rx: Receiver<Msg>) {
-        if self.stored.is_some() {
+        if let Some(stored) = &self.stored {
+            // Show the last known dashboard while connecting.
+            if self.cache.is_some() {
+                let loaded = cache::load(&stored.url);
+                if let Some((layout, states)) = &loaded {
+                    log::info!("showing the cached layout until Home Assistant answers");
+                    self.apply_layout(layout.clone());
+                    self.apply_states(states);
+                }
+                self.cache = Some(cache::Cache::new(loaded.as_ref()));
+            }
             self.phase = Phase::Retry { at: Instant::now() };
         } else {
             self.emit(Event::Status(Status::NotConfigured));
@@ -289,6 +306,9 @@ impl Worker {
     }
 
     fn tick(&mut self) {
+        if let (Some(cache), Some(stored)) = (&mut self.cache, &self.stored) {
+            cache.tick(&stored.url);
+        }
         match self.phase {
             Phase::Retry { at } if Instant::now() >= at => self.connect(),
             Phase::Handshake { deadline } if Instant::now() >= deadline => {
@@ -326,6 +346,9 @@ impl Worker {
                 }
                 let _ = self.nvs.remove(NVS_URL);
                 let _ = self.nvs.remove(NVS_REFRESH);
+                if let Some(cache) = &mut self.cache {
+                    cache.clear();
+                }
                 self.disconnect();
                 self.access = None;
                 self.phase = Phase::Idle;
@@ -676,28 +699,50 @@ impl Worker {
         }
     }
 
+    /// Sends a layout to the UI. False if it doesn't parse.
+    fn apply_layout(&self, layout: Value) -> bool {
+        match serde_json::from_value::<Layout>(layout) {
+            Ok(layout) => {
+                log::info!("layout: {} page(s)", layout.pages.len());
+                self.emit(Event::Layout(layout));
+                true
+            }
+            Err(e) => {
+                log::warn!("bad layout: {e}");
+                false
+            }
+        }
+    }
+
+    fn apply_states(&self, tiles: &serde_json::Map<String, Value>) {
+        let states = tiles
+            .iter()
+            .filter_map(|(id, v)| {
+                serde_json::from_value::<TileState>(v.clone())
+                    .ok()
+                    .map(|s| (id.clone(), s))
+            })
+            .collect();
+        self.emit(Event::States(states));
+    }
+
     fn screen_event(&mut self, event: &Value) {
         match event["kind"].as_str() {
-            Some("layout") => match serde_json::from_value::<Layout>(event["layout"].clone()) {
-                Ok(layout) => {
-                    log::info!("layout: {} page(s)", layout.pages.len());
-                    self.emit(Event::Layout(layout));
+            Some("layout") => {
+                if self.apply_layout(event["layout"].clone()) {
+                    if let (Some(cache), Some(stored)) = (&mut self.cache, &self.stored) {
+                        cache.set_layout(&stored.url, &event["layout"]);
+                    }
                 }
-                Err(e) => log::warn!("bad layout: {e}"),
-            },
+            }
             Some("states") => {
                 let Some(tiles) = event["tiles"].as_object() else {
                     return;
                 };
-                let states = tiles
-                    .iter()
-                    .filter_map(|(id, v)| {
-                        serde_json::from_value::<TileState>(v.clone())
-                            .ok()
-                            .map(|s| (id.clone(), s))
-                    })
-                    .collect();
-                self.emit(Event::States(states));
+                self.apply_states(tiles);
+                if let Some(cache) = &mut self.cache {
+                    cache.merge_states(tiles);
+                }
             }
             Some("ota") => self.firmware_update(event),
             Some("command") => {

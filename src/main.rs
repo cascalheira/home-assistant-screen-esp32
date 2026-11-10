@@ -152,7 +152,7 @@ fn main() -> anyhow::Result<()> {
     let wifi = wifi::start(p.modem, sysloop, nvs.clone())?;
     let screen_id = wifi.mac.replace(':', "");
     let (update_tx, update_rx) = mpsc::channel();
-    let ha = ha::start(nvs.clone(), screen_id, update_tx.clone())?;
+    let ha = ha::start(nvs.clone(), screen_id, update_tx.clone(), sd_card.is_some())?;
     let app = app::App::new(&ui, wifi, ha, update_rx);
     if sd_card.is_some() {
         ota::update_from_sd(update_tx);

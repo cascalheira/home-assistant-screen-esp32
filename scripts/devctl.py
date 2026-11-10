@@ -129,7 +129,21 @@ def cmd_send(line, seconds="1"):
     sys.stdout.write(read_log_from(offset, float(seconds)).decode("utf-8", "replace"))
 
 
-def cmd_shot(path):
+def cmd_shot(path, attempts=3):
+    # Log lines from other tasks can still cut into the dump: retry.
+    for attempt in range(int(attempts)):
+        try:
+            return take_shot(path)
+        except ShotCorrupted as e:
+            print(f"{e}, retrying" if attempt + 1 < int(attempts) else str(e), file=sys.stderr)
+    sys.exit(1)
+
+
+class ShotCorrupted(Exception):
+    pass
+
+
+def take_shot(path):
     from PIL import Image
 
     offset = log_size()
@@ -143,7 +157,7 @@ def cmd_shot(path):
     body = "".join(line.strip() for line in m[4].splitlines() if re.fullmatch(r"[A-Za-z0-9+/=]+", line.strip()))
     rle = base64.b64decode(body)
     if len(rle) != n:
-        sys.exit(f"screenshot corrupted: got {len(rle)} bytes, expected {n}")
+        raise ShotCorrupted(f"screenshot corrupted: got {len(rle)} bytes, expected {n}")
     pixels = bytearray()
     for i in range(0, len(rle), 3):
         run, value = rle[i], rle[i + 1] | rle[i + 2] << 8
@@ -152,7 +166,7 @@ def cmd_shot(path):
         b = (value & 0x1F) * 255 // 31
         pixels += bytes((r, g, b)) * run
     if len(pixels) != w * h * 3:
-        sys.exit(f"screenshot has {len(pixels) // 3} pixels, expected {w * h}")
+        raise ShotCorrupted(f"screenshot has {len(pixels) // 3} pixels, expected {w * h}")
     Image.frombytes("RGB", (w, h), bytes(pixels)).save(path)
     print(f"saved {path} ({w}x{h}, {n} bytes compressed)")
 

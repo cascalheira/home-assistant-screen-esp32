@@ -155,6 +155,13 @@ fn screenshot(frame_buffer: usize) {
     };
     let total = runs().count() * 3;
 
+    // Other tasks' log lines would land in the middle of the dump.
+    unsafe {
+        esp_idf_svc::sys::esp_log_level_set(
+            c"*".as_ptr(),
+            esp_idf_svc::sys::esp_log_level_t_ESP_LOG_NONE,
+        )
+    };
     let mut out = std::io::stdout().lock();
     let _ = writeln!(out, "\nSHOT-BEGIN {LCD_H_RES} {LCD_V_RES} {total}");
     // 30 runs = 90 bytes = one 120-character base64 line without padding.
@@ -174,6 +181,12 @@ fn screenshot(frame_buffer: usize) {
     }
     let _ = writeln!(out, "SHOT-END");
     let _ = out.flush();
+    unsafe {
+        esp_idf_svc::sys::esp_log_level_set(
+            c"*".as_ptr(),
+            esp_idf_svc::sys::esp_log_level_t_ESP_LOG_INFO,
+        )
+    };
 }
 
 fn base64(data: &[u8]) -> String {
