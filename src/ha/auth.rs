@@ -6,7 +6,6 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Context, Result};
 use esp_idf_svc::http::client::{Configuration, EspHttpConnection};
 use esp_idf_svc::http::Method;
-use esp_idf_svc::sys;
 use serde_json::{json, Value};
 
 use crate::logic::net::url_encode;
@@ -206,6 +205,19 @@ pub fn revoke(base: &str, refresh_token: &str) {
     }
 }
 
+/// Opens a connection to `base` and drops it: lets tls::probe see the
+/// server's certificate.
+pub fn probe(base: &str) {
+    let Ok(mut conn) = EspHttpConnection::new(&Configuration {
+        timeout: Some(Duration::from_secs(10)),
+        crt_bundle_attach: Some(super::tls::attach),
+        ..Default::default()
+    }) else {
+        return;
+    };
+    let _ = conn.initiate_request(Method::Get, &format!("{base}/"), &[]);
+}
+
 fn post_json(url: &str, body: &Value) -> Result<(u16, Value)> {
     post(url, "application/json", body.to_string().as_bytes())
 }
@@ -217,7 +229,7 @@ fn post_form(url: &str, body: &str) -> Result<(u16, Value)> {
 fn post(url: &str, content_type: &str, body: &[u8]) -> Result<(u16, Value)> {
     let mut conn = EspHttpConnection::new(&Configuration {
         timeout: Some(Duration::from_secs(10)),
-        crt_bundle_attach: Some(sys::esp_crt_bundle_attach),
+        crt_bundle_attach: Some(super::tls::attach),
         ..Default::default()
     })?;
     let len = body.len().to_string();

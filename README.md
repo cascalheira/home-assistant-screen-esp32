@@ -128,7 +128,8 @@ Development builds (the default `dev-console` feature) read commands on the
 serial port: `tap X Y [MS]`, `type TEXT`, `key enter`, `key back`, `shot`,
 `status`, `sd`, `sdformat ERASE`, `sdcopyslot`, `saver`, `bench`,
 `flipshot MS`, `page NAME`, `forget`, `reboot`. `src/console.rs` describes
-each one. Release images leave the console out, so anyone with a USB cable
+each one. Logging pauses while `shot` sends a screenshot, so events during
+those few seconds don't show in the log. Release images leave the console out, so anyone with a USB cable
 can't drive the screen.
 
 On macOS, opening the CH340 port resets the board. So `scripts/devctl.py serve`
@@ -262,6 +263,14 @@ image, which it keeps as a build artifact.
 - **Websocket quirk.** Home Assistant's greeting arrives in the same packet as
   the handshake, and ESP-IDF's transport only releases it after its read
   timeout. The screen therefore sends its auth message as soon as it connects.
+- **HTTPS.** An `https://` address works with a certificate from a public
+  authority (Let's Encrypt, Nabu Casa). With a self-signed certificate the
+  screen shows its SHA-256 fingerprint and asks whether to trust it. Compare
+  it with `openssl x509 -noout -fingerprint -sha256 -in <certificate>`. A
+  trusted certificate is the only one accepted for that server from then on.
+  If it changes, the screen stops and asks you to sign in again, so the new
+  one gets checked. TLS buffers live in PSRAM: internal RAM has about 30 KB
+  free, less than one TLS session needs.
 - **Security.** The Wi-Fi password is stored in NVS without flash encryption.
 - **SD card.** The card is mounted at boot. It holds `update.bin` for updates
   and `esp32-screen/cache.json`, the last layout and states. The cache has

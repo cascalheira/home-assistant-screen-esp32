@@ -66,3 +66,7 @@ CONFIG_FATFS_MAX_LFN=255
 # does after running for a while, see src/ota.rs) the bootloader returns to
 # the previous image on the next reset.
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# TLS (HTTPS Home Assistant) buffers in PSRAM: internal RAM has about 30 KB
+# free, less than one TLS session needs.
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y

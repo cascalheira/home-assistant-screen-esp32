@@ -56,7 +56,7 @@ impl WebSocket {
             network_timeout_ms: 10_000,
             ping_interval_sec: 20,
             pingpong_timeout_sec: 30,
-            crt_bundle_attach: Some(sys::esp_crt_bundle_attach),
+            crt_bundle_attach: Some(super::tls::attach),
             ..Default::default()
         };
         unsafe {

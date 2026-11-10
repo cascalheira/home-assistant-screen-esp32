@@ -69,6 +69,8 @@ enum Outcome {
     WifiFailed,
     HaOk,
     HaFailed,
+    /// Home Assistant's certificate needs the user's decision.
+    HaUntrusted,
 }
 
 /// What the button on the dashboard's message does.
@@ -413,6 +415,12 @@ impl Shared {
                 Outcome::WifiFailed => s.retry_wifi(),
                 Outcome::HaOk => s.show_dashboard(),
                 Outcome::HaFailed => s.show_entry(Entry::HaPassword, String::new()),
+                Outcome::HaUntrusted => {
+                    let url = s.st.borrow().ha_url_input.clone();
+                    s.st.borrow_mut().progress = Progress::HaLogin;
+                    s.show_progress("Signing in…", &ha::auth::normalize_url(&url), "");
+                    s.ha.send(ha::Command::TrustCertificate);
+                }
             }
         });
         on!(on_result_secondary_clicked, |s| {
@@ -420,6 +428,10 @@ impl Shared {
             match outcome {
                 Outcome::WifiFailed => s.show_networks(),
                 Outcome::HaFailed => s.show_ha_find(),
+                Outcome::HaUntrusted => {
+                    s.ha.send(ha::Command::RejectCertificate);
+                    s.show_ha_find();
+                }
                 Outcome::WifiOk | Outcome::HaOk => {}
             }
         });
@@ -976,6 +988,28 @@ impl Shared {
                 "Change address",
             ),
             ha::Event::MfaRequired => self.show_entry(Entry::HaMfa, String::new()),
+            ha::Event::UntrustedCertificate(fingerprint) => {
+                // 32 bytes in four lines of eight, so it wraps predictably.
+                let lines: Vec<&str> = fingerprint
+                    .as_bytes()
+                    .chunks(24)
+                    .map(|line| {
+                        std::str::from_utf8(line)
+                            .unwrap_or("")
+                            .trim_end_matches(':')
+                    })
+                    .collect();
+                self.show_result(
+                    Outcome::HaUntrusted,
+                    "Check the certificate",
+                    &format!(
+                        "Home Assistant's certificate isn't from a known authority. It may be self-signed. Trust it only if its SHA-256 fingerprint is:\n\n{}",
+                        lines.join("\n")
+                    ),
+                    "Trust",
+                    "Cancel",
+                );
+            }
             ha::Event::LoggedIn => {
                 let name = {
                     let mut st = self.st.borrow_mut();

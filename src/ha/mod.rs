@@ -10,6 +10,7 @@
 pub mod auth;
 mod cache;
 pub mod model;
+pub mod tls;
 mod ws;
 
 use std::collections::HashMap;
@@ -33,6 +34,10 @@ const NVS_REFRESH: &str = "refresh";
 const NVS_TZ: &str = "tz";
 /// Version whose rollback was already reported to Home Assistant.
 const NVS_ROLLBACK_REPORTED: &str = "rb_reported";
+/// Server whose certificate the user trusted on the screen (see tls.rs),
+/// and that certificate's SHA-256.
+const NVS_CERT_URL: &str = "cert_url";
+const NVS_CERT_SHA: &str = "cert_sha";
 
 const SCREEN_NAME: &str = "ESP32 Screen";
 const SCREEN_MODEL: &str = "ESP32-8048S043";
@@ -54,6 +59,10 @@ pub enum Command {
     SubmitMfa {
         code: String,
     },
+    /// Answer to `Event::UntrustedCertificate`: trust it and sign in.
+    TrustCertificate,
+    /// Answer to `Event::UntrustedCertificate`: don't.
+    RejectCertificate,
     Logout,
     /// Run a tile action (docs/protocol.md, `esp32_screen/action`).
     Action {
@@ -86,6 +95,10 @@ pub enum Event {
     Discovered(Vec<Instance>),
     LoginFailed(String),
     MfaRequired,
+    /// Signing in failed because the server's certificate isn't from a
+    /// known authority. Carries its SHA-256 fingerprint (`AB:CD:…`); answer
+    /// with `TrustCertificate` or `RejectCertificate`.
+    UntrustedCertificate(String),
     LoggedIn,
     LoggedOut,
     Status(Status),
@@ -169,6 +182,7 @@ pub fn start(
 ) -> Result<HaHandle> {
     let nvs = EspNvs::new(nvs_partition, NVS_NAMESPACE, true)?;
     let stored = load(&nvs);
+    let pin = load_pin(&nvs);
     let mut tz = [0u8; 96];
     if let Some(rule) = nvs.get_str(NVS_TZ, &mut tz).ok().flatten() {
         crate::saver::set_timezone(rule);
@@ -197,6 +211,9 @@ pub fn start(
         mfa: None,
         mdns: None,
         cache: sd_card.then(cache::Cache::default),
+        pin,
+        untrusted: None,
+        trusted_now: None,
     };
     thread::Builder::new()
         .name("ha".into())
@@ -212,6 +229,31 @@ pub fn start(
 struct Stored {
     url: String,
     refresh: String,
+}
+
+fn load_pin(nvs: &EspNvs<NvsDefault>) -> Option<(String, tls::Fingerprint)> {
+    let mut url = [0u8; 256];
+    let mut sha = [0u8; 32];
+    let url = nvs
+        .get_str(NVS_CERT_URL, &mut url)
+        .ok()
+        .flatten()?
+        .to_string();
+    let sha: tls::Fingerprint = nvs
+        .get_blob(NVS_CERT_SHA, &mut sha)
+        .ok()
+        .flatten()?
+        .try_into()
+        .ok()?;
+    Some((url, sha))
+}
+
+/// A sign-in waiting for the user to decide about the server's certificate.
+struct UntrustedLogin {
+    url: String,
+    username: String,
+    password: String,
+    fingerprint: tls::Fingerprint,
 }
 
 fn load(nvs: &EspNvs<NvsDefault>) -> Option<Stored> {
@@ -268,6 +310,13 @@ struct Worker {
     mdns: Option<EspMdns>,
     /// Layout and states on the SD card; None without a card.
     cache: Option<cache::Cache>,
+    /// The certificate trusted for a server (saved in NVS).
+    pin: Option<(String, tls::Fingerprint)>,
+    /// Sign-in waiting for a decision about the server's certificate.
+    untrusted: Option<UntrustedLogin>,
+    /// Certificate trusted for a sign-in still in progress; saved once the
+    /// sign-in succeeds.
+    trusted_now: Option<(String, tls::Fingerprint)>,
 }
 
 impl Worker {
@@ -330,11 +379,44 @@ impl Worker {
                 password,
             } => {
                 let url = auth::normalize_url(&url);
+                self.trusted_now = None;
+                self.trust_for(&url);
                 let result = auth::login(&url, &self.client_id, &username, &password);
+                if let Some(fingerprint) = self.untrusted_certificate(&url, &result) {
+                    log::info!(
+                        "{url} has an untrusted certificate {}",
+                        tls::format(&fingerprint)
+                    );
+                    self.emit(Event::UntrustedCertificate(tls::format(&fingerprint)));
+                    self.untrusted = Some(UntrustedLogin {
+                        url,
+                        username,
+                        password,
+                        fingerprint,
+                    });
+                    return;
+                }
                 self.login_result(url, result);
             }
+            Command::TrustCertificate => {
+                let Some(login) = self.untrusted.take() else {
+                    return;
+                };
+                log::info!("certificate trusted for {}", login.url);
+                self.trusted_now = Some((login.url.clone(), login.fingerprint));
+                self.trust_for(&login.url);
+                let result = auth::login(
+                    &login.url,
+                    &self.client_id,
+                    &login.username,
+                    &login.password,
+                );
+                self.login_result(login.url, result);
+            }
+            Command::RejectCertificate => self.untrusted = None,
             Command::SubmitMfa { code } => match self.mfa.take() {
                 Some((url, flow_id)) => {
+                    self.trust_for(&url);
                     let result = auth::submit_mfa(&url, &self.client_id, &flow_id, &code);
                     self.login_result(url, result);
                 }
@@ -342,10 +424,16 @@ impl Worker {
             },
             Command::Logout => {
                 if let Some(stored) = self.stored.take() {
+                    self.trust_for(&stored.url);
                     auth::revoke(&stored.url, &stored.refresh);
                 }
                 let _ = self.nvs.remove(NVS_URL);
                 let _ = self.nvs.remove(NVS_REFRESH);
+                let _ = self.nvs.remove(NVS_CERT_URL);
+                let _ = self.nvs.remove(NVS_CERT_SHA);
+                self.pin = None;
+                self.trusted_now = None;
+                tls::set_pin(None);
                 if let Some(cache) = &mut self.cache {
                     cache.clear();
                 }
@@ -407,6 +495,22 @@ impl Worker {
                 if let Err(e) = saved {
                     log::error!("could not store the Home Assistant login: {e}");
                 }
+                // A certificate trusted for this sign-in now belongs to the
+                // server; one trusted for another server is dropped.
+                if let Some((pin_url, sha)) = self.trusted_now.take().filter(|(u, _)| *u == url) {
+                    let saved = self
+                        .nvs
+                        .set_str(NVS_CERT_URL, &pin_url)
+                        .and_then(|_| self.nvs.set_blob(NVS_CERT_SHA, &sha));
+                    if let Err(e) = saved {
+                        log::error!("could not store the trusted certificate: {e}");
+                    }
+                    self.pin = Some((pin_url, sha));
+                } else if self.pin.as_ref().is_some_and(|(u, _)| *u != url) {
+                    let _ = self.nvs.remove(NVS_CERT_URL);
+                    let _ = self.nvs.remove(NVS_CERT_SHA);
+                    self.pin = None;
+                }
                 log::info!("logged in to Home Assistant at {url}");
                 self.stored = Some(Stored {
                     url,
@@ -427,6 +531,36 @@ impl Worker {
                 self.emit(Event::LoginFailed(e.describe()));
             }
         }
+    }
+
+    /// Selects the certificate check for a connection to `url`: the
+    /// certificate trusted for it, or public authorities.
+    fn trust_for(&self, url: &str) {
+        let pin = [&self.trusted_now, &self.pin]
+            .into_iter()
+            .flatten()
+            .find(|(u, _)| u == url)
+            .map(|(_, sha)| *sha);
+        tls::set_pin(pin);
+    }
+
+    /// After a failed sign-in: the certificate the server presented, if
+    /// failing to trust it is why the connection failed.
+    fn untrusted_certificate(
+        &self,
+        url: &str,
+        result: &Result<LoginStep, LoginError>,
+    ) -> Option<tls::Fingerprint> {
+        if !url.starts_with("https://") || !matches!(result, Err(LoginError::Unreachable(_))) {
+            return None;
+        }
+        let seen = tls::probe(|| auth::probe(url))?;
+        // The trusted certificate itself: the failure has another cause.
+        let trusted = self
+            .pin
+            .as_ref()
+            .is_some_and(|(u, sha)| u == url && *sha == seen);
+        (!trusted).then_some(seen)
     }
 
     fn discover(&mut self) -> Vec<Instance> {
@@ -496,6 +630,7 @@ impl Worker {
         };
         let url = stored.url.clone();
         self.emit(Event::Status(Status::Connecting));
+        self.trust_for(&url);
 
         if self.access.is_none() {
             match auth::refresh(&url, &self.client_id, &stored.refresh) {
@@ -557,6 +692,16 @@ impl Worker {
     /// Drops the connection and schedules a retry with backoff.
     fn fail(&mut self, reason: String) {
         self.disconnect();
+        if tls::take_refused().is_some() {
+            // The trusted certificate was replaced: someone has to look at
+            // the new one before the screen talks to the server again.
+            log::warn!("Home Assistant presented a different certificate");
+            self.phase = Phase::Idle;
+            self.emit(Event::Status(Status::NeedsLogin(
+                "Home Assistant's certificate changed. Sign in again to check the new one.".into(),
+            )));
+            return;
+        }
         let delay = Duration::from_secs(2u64.saturating_pow(self.backoff.min(6))).min(MAX_BACKOFF);
         self.backoff += 1;
         log::warn!(
@@ -872,6 +1017,9 @@ impl Worker {
     ) -> Result<esp_idf_svc::http::client::EspHttpConnection> {
         use esp_idf_svc::http::client::{Configuration, EspHttpConnection};
         use esp_idf_svc::http::Method;
+        if let Some(stored) = &self.stored {
+            self.trust_for(&stored.url);
+        }
         let mut attempt = 0;
         let conn = loop {
             attempt += 1;
@@ -879,7 +1027,7 @@ impl Worker {
             let mut conn = EspHttpConnection::new(&Configuration {
                 timeout: Some(Duration::from_secs(30)),
                 buffer_size: Some(4096),
-                crt_bundle_attach: Some(esp_idf_svc::sys::esp_crt_bundle_attach),
+                crt_bundle_attach: Some(tls::attach),
                 ..Default::default()
             })?;
             let auth = format!("Bearer {token}");

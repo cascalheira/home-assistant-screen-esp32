@@ -42,3 +42,11 @@ fn bars_thresholds() {
     assert_eq!(wifi_bars(-79), 1);
     assert_eq!(wifi_bars(i8::MIN), 1);
 }
+
+#[test]
+fn fingerprint_like_openssl() {
+    use esp32_screen_host_tests::logic::net::fingerprint_text;
+    assert_eq!(fingerprint_text(&[0xEA, 0x48, 0x0B]), "EA:48:0B");
+    assert_eq!(fingerprint_text(&[0u8; 32]).len(), 32 * 3 - 1);
+    assert_eq!(fingerprint_text(&[]), "");
+}

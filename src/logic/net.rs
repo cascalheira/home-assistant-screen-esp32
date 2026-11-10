@@ -44,3 +44,13 @@ pub fn wifi_bars(rssi: i8) -> i32 {
         _ => 1,
     }
 }
+
+/// `AB:CD:…`: bytes as upper-case hex pairs joined by colons, as
+/// `openssl x509 -noout -fingerprint -sha256` prints a fingerprint.
+pub fn fingerprint_text(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|b| format!("{b:02X}"))
+        .collect::<Vec<_>>()
+        .join(":")
+}
