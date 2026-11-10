@@ -19,6 +19,7 @@ from .const import (
     MAX_NAME_LEN,
     OTA_STATES,
     SCREEN_ID_PATTERN,
+    SCREENSAVER_MODES,
 )
 from .layout import LayoutError, validate_layout
 from .manager import ActionError, ScreenManager
@@ -36,6 +37,7 @@ def async_register_commands(hass: HomeAssistant) -> None:
         ws_subscribe,
         ws_action,
         ws_ota_status,
+        ws_state,
         ws_screens,
         ws_save_layout,
         ws_update_screen,
@@ -198,6 +200,38 @@ def ws_ota_status(
         return
     manager.async_ota_status(
         msg["screen_id"], msg["state"], msg["progress"], msg.get("error")
+    )
+    connection.send_result(msg["id"])
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "esp32_screen/state",
+        vol.Required("screen_id"): SCREEN_ID,
+        vol.Required("brightness"): vol.All(int, vol.Range(min=0, max=100)),
+        vol.Required("screensaver_mode"): vol.In(SCREENSAVER_MODES),
+        vol.Required("screensaver_delay"): vol.All(int, vol.Range(min=0, max=86400)),
+        vol.Required("screensaver_active"): bool,
+    }
+)
+@callback
+def ws_state(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Brightness and screensaver state reported by a screen."""
+    if (manager := _manager(hass, connection, msg)) is None:
+        return
+    if msg["screen_id"] not in manager.screens:
+        connection.send_error(
+            msg["id"], websocket_api.ERR_NOT_FOUND, f"Unknown screen {msg['screen_id']}"
+        )
+        return
+    manager.async_device_state(
+        msg["screen_id"],
+        {
+            key: msg[key]
+            for key in ("brightness", "screensaver_mode", "screensaver_delay", "screensaver_active")
+        },
     )
     connection.send_result(msg["id"])
 

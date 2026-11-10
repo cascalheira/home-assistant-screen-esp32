@@ -11,6 +11,39 @@
     }
   },
   "entity": {
+    "binary_sensor": {
+      "screensaver_active": {
+        "name": "Screensaver"
+      }
+    },
+    "button": {
+      "wake": {
+        "name": "Wake"
+      },
+      "show_clock": {
+        "name": "Show clock"
+      }
+    },
+    "light": {
+      "backlight": {
+        "name": "Backlight"
+      }
+    },
+    "number": {
+      "screensaver_delay": {
+        "name": "Screensaver delay"
+      }
+    },
+    "select": {
+      "screensaver": {
+        "name": "Screensaver",
+        "state": {
+          "off": "Off",
+          "clock": "Clock",
+          "flip": "Flip clock"
+        }
+      }
+    },
     "update": {
       "firmware": {
         "name": "Firmware"

@@ -152,7 +152,10 @@ and streams tile states to the screens. The contract with the firmware is
    temperature or humidity sensor instead of the AC's own reading.
 
 Each screen also appears as a device (manufacturer "ESP32 Screen"). Deleting
-that device deletes the screen's layout.
+that device deletes the screen's layout. The device has entities for the
+backlight (a light), the screensaver mode and delay, buttons to wake the
+screen or show the clock, and a sensor that is on while the screensaver
+shows. Use them in automations, for example to dim the screens at night.
 
 **Firmware updates.** Copy a firmware image (`.bin`, project `esp32-screen`) into
 `<HA config>/esp32_screen/firmware/`. Within a minute every screen's

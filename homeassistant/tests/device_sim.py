@@ -254,6 +254,10 @@ class ScreenSim:
             self.log(f"ota: version {event['version']} size {event['size']} sha256 {event['sha256'][:12]}... url {event['url']}")
             if self.ota_mode != "ignore":
                 self._spawn(self.perform_ota(event, fail=self.ota_mode == "fail"))
+        elif event.get("kind") == "command":
+            self.log(f"command {event['command']} {event.get('value')!r}")
+        elif event.get("kind") in ("settings", "info", "notify", "dismiss"):
+            self.log(f"{event['kind']}: { {k: v for k, v in event.items() if k != 'kind'} }")
         else:
             self.log("unknown event:", event)
         self._spawn(self._notify())
@@ -331,6 +335,18 @@ class ScreenSim:
             headers["Authorization"] = f"Bearer {token or self.tokens['access_token']}"
         async with self.session.get(self.url + url, headers=headers) as resp:
             return resp.status, await resp.read(), dict(resp.headers)
+
+    async def report_state(
+        self, brightness: int = 80, screensaver_mode: str = "clock", screensaver_delay: int = 300,
+        screensaver_active: bool = False,
+    ) -> Any:
+        """esp32_screen/state, as the firmware sends after subscribe and on changes."""
+        assert self.ws is not None
+        return await self.ws.call(
+            "esp32_screen/state", screen_id=self.screen_id, brightness=brightness,
+            screensaver_mode=screensaver_mode, screensaver_delay=screensaver_delay,
+            screensaver_active=screensaver_active,
+        )
 
     async def ota_status(self, state: str, progress: int = 0, error: str | None = None) -> Any:
         assert self.ws is not None

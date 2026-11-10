@@ -250,6 +250,8 @@ class ScreenManager:
         self._last_hvac_mode: dict[tuple[str, str], str] = {}
         self.firmware = FirmwareStore(hass)
         self.ota_jobs: dict[str, OtaJob] = {}
+        # Last esp32_screen/state report per online screen (memory only).
+        self.device_states: dict[str, dict[str, Any]] = {}
         # Called with a screen_id when its install progress or record changes.
         self._screen_listeners: set[Callable[[str], None]] = set()
 
@@ -339,6 +341,31 @@ class ScreenManager:
     def _notify_screen(self, screen_id: str) -> None:
         for listener in list(self._screen_listeners):
             listener(screen_id)
+
+    # ---- screen controls -------------------------------------------------------
+
+    @callback
+    def async_send_event(self, screen_id: str, event: dict[str, Any]) -> int:
+        """Send an event on every open subscription of a screen. Returns how many."""
+        subs = self._subscriptions.get(screen_id, set())
+        for sub in subs:
+            sub.connection.send_event(sub.msg_id, event)
+        return len(subs)
+
+    @callback
+    def async_send_command(self, screen_id: str, command: str, value: Any = None) -> None:
+        """Send a `command` event. Raises when the screen is offline."""
+        if not self.async_send_event(
+            screen_id, {"kind": "command", "command": command, "value": value}
+        ):
+            raise HomeAssistantError("Screen is offline")
+
+    @callback
+    def async_device_state(self, screen_id: str, state: dict[str, Any]) -> None:
+        """State report from a screen (esp32_screen/state)."""
+        if self.device_states.get(screen_id) != state:
+            self.device_states[screen_id] = state
+            self._notify_screen(screen_id)
 
     # ---- firmware updates ----------------------------------------------------
 
@@ -472,6 +499,8 @@ class ScreenManager:
                 subs.discard(sub)
                 if not subs:
                     del self._subscriptions[screen_id]
+                    # Offline: forget the reported state; it is resent on subscribe.
+                    self.device_states.pop(screen_id, None)
             if (record := self.screens.get(screen_id)) is not None:
                 self._touch(record)
             self._notify()

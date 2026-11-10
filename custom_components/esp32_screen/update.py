@@ -17,6 +17,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN, OTA_TIMEOUT
+from .entity import async_setup_screen_entities
 from .manager import ScreenManager
 
 
@@ -26,20 +27,9 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Create an update entity for every screen, now and when screens appear."""
-    manager: ScreenManager = hass.data[DOMAIN]
-    known: set[str] = set()
-
-    @callback
-    def sync_entities(_screen_id: str | None = None) -> None:
-        # Screens that were removed lose their device, which removes the entity.
-        known.intersection_update(manager.screens)
-        new = [sid for sid in manager.screens if sid not in known]
-        if new:
-            known.update(new)
-            async_add_entities(ScreenFirmwareUpdate(manager, sid) for sid in new)
-
-    sync_entities()
-    entry.async_on_unload(manager.async_add_screen_listener(sync_entities))
+    async_setup_screen_entities(
+        hass, entry, async_add_entities, lambda m, sid: [ScreenFirmwareUpdate(m, sid)]
+    )
 
 
 class ScreenFirmwareUpdate(UpdateEntity):

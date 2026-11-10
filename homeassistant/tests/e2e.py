@@ -57,6 +57,81 @@ def fake_image(version: str, project: str = "esp32-screen", magic: int = 0xABCD5
     return bytes(buf)
 
 
+async def control_tests(admin: HAWebSocket, sim: ScreenSim) -> None:
+    """Section 6: backlight, screensaver select/number/sensor, wake/show-clock buttons."""
+    registry = await admin.call("config/entity_registry/list")
+    keys = ("backlight", "screensaver", "screensaver_delay", "wake", "show_clock", "screensaver_active")
+    ids = {k: next((e["entity_id"] for e in registry if e.get("unique_id") == f"{SIM_ID}_{k}"), None) for k in keys}
+    check(all(ids.values()), "screen control entities exist", str(ids))
+    if not all(ids.values()):
+        return
+    check(ids["backlight"].startswith("light.") and ids["screensaver"].startswith("select.")
+          and ids["screensaver_delay"].startswith("number.") and ids["wake"].startswith("button.")
+          and ids["show_clock"].startswith("button.") and ids["screensaver_active"].startswith("binary_sensor."),
+          "control entity domains", " ".join(ids.values()))
+
+    async def states() -> dict[str, dict[str, Any]]:
+        all_states = {st["entity_id"]: st for st in await admin.call("get_states")}
+        return {k: all_states[eid] for k, eid in ids.items()}
+
+    async def service(domain: str, name: str, key: str, **data: Any) -> Any:
+        return await admin.call("call_service", domain=domain, service=name,
+                                target={"entity_id": ids[key]}, service_data=data)
+
+    async def command_after(coro: Any) -> dict[str, Any] | None:
+        mark = sim.mark()
+        await coro
+        try:
+            return await sim.wait_for(lambda e: e.get("kind") == "command", 5, since=mark)
+        except TimeoutError:
+            return None
+
+    # Not reported yet (the simulator only reports when asked).
+    st = await states()
+    check(st["backlight"]["state"] == "unavailable" and st["screensaver"]["state"] == "unavailable"
+          and st["wake"]["state"] != "unavailable",
+          "before the first state report: controls unavailable, buttons available",
+          f"light={st['backlight']['state']} select={st['screensaver']['state']} wake={st['wake']['state']}")
+
+    await sim.report_state(brightness=80, screensaver_mode="clock", screensaver_delay=300, screensaver_active=False)
+    await asyncio.sleep(0.3)
+    st = await states()
+    check(st["backlight"]["state"] == "on" and st["backlight"]["attributes"].get("brightness") == 204
+          and st["screensaver"]["state"] == "clock" and float(st["screensaver_delay"]["state"]) == 5
+          and st["screensaver_active"]["state"] == "off",
+          "entities reflect esp32_screen/state",
+          f"light={st['backlight']['state']}/{st['backlight']['attributes'].get('brightness')} "
+          f"select={st['screensaver']['state']} delay={st['screensaver_delay']['state']} active={st['screensaver_active']['state']}")
+
+    cmd = await command_after(service("light", "turn_on", "backlight", brightness=128))
+    check(cmd == {"kind": "command", "command": "brightness", "value": 50}, "light.turn_on brightness 128 -> command brightness 50", str(cmd))
+    cmd = await command_after(service("light", "turn_off", "backlight"))
+    check(cmd == {"kind": "command", "command": "brightness", "value": 0}, "light.turn_off -> command brightness 0", str(cmd))
+    await sim.report_state(brightness=0, screensaver_mode="clock", screensaver_delay=300)
+    await asyncio.sleep(0.3)
+    check((await states())["backlight"]["state"] == "off", "reported brightness 0 -> light off")
+    cmd = await command_after(service("light", "turn_on", "backlight"))
+    check(cmd == {"kind": "command", "command": "brightness", "value": 80}, "light.turn_on restores the last brightness (80)", str(cmd))
+    cmd = await command_after(service("select", "select_option", "screensaver", option="flip"))
+    check(cmd == {"kind": "command", "command": "screensaver_mode", "value": "flip"}, "select flip -> command screensaver_mode", str(cmd))
+    cmd = await command_after(service("number", "set_value", "screensaver_delay", value=10))
+    check(cmd == {"kind": "command", "command": "screensaver_delay", "value": 600}, "number 10 min -> command screensaver_delay 600 s", str(cmd))
+    cmd = await command_after(service("button", "press", "wake"))
+    check(cmd == {"kind": "command", "command": "wake", "value": None}, "wake button -> command wake", str(cmd))
+    cmd = await command_after(service("button", "press", "show_clock"))
+    check(cmd == {"kind": "command", "command": "sleep", "value": None}, "show clock button -> command sleep", str(cmd))
+    await sim.report_state(brightness=80, screensaver_mode="flip", screensaver_delay=600, screensaver_active=True)
+    await asyncio.sleep(0.3)
+    st = await states()
+    check(st["screensaver_active"]["state"] == "on" and st["screensaver"]["state"] == "flip" and float(st["screensaver_delay"]["state"]) == 10,
+          "screen-side changes are reflected (screensaver showing, flip, 10 min)")
+    await expect_error(sim.ws.call("esp32_screen/state", screen_id="000000000000", brightness=1, screensaver_mode="off",
+                                   screensaver_delay=60, screensaver_active=False), "not_found", "state for an unknown screen -> not_found")
+    await expect_error(sim.ws.call("esp32_screen/state", screen_id=SIM_ID, brightness=101, screensaver_mode="off",
+                                   screensaver_delay=60, screensaver_active=False), "invalid_format", "state with brightness 101 -> invalid_format")
+    await sim.report_state(brightness=80, screensaver_mode="clock", screensaver_delay=300, screensaver_active=False)
+
+
 async def firmware_tests(
     admin: HAWebSocket, sim: ScreenSim, firmware_dir: Path, session: aiohttp.ClientSession, url: str
 ) -> None:
@@ -742,6 +817,9 @@ async def main() -> int:
         check(unknown_events[:2] == [{"kind": "layout", "layout": {"version": 1, "pages": []}}, {"kind": "states", "tiles": {}}],
               "unknown screen gets an empty layout", str(unknown_events[:2]))
 
+        # ---- screen controls as entities (section 6) -----------------------------------------
+        await control_tests(admin, sim)
+
         # ---- firmware updates (section 5) -------------------------------------------------------
         await firmware_tests(admin, sim, firmware_dir, session, url)
 
@@ -755,6 +833,11 @@ async def main() -> int:
         await asyncio.sleep(0.5)
         rec = next(s for s in screen_lists[-1] if s["screen_id"] == SIM_ID)
         check(not rec["online"] and rec["last_seen"], "screen goes offline on disconnect, last_seen kept", str({k: rec[k] for k in ("online", "last_seen")}))
+        offline = {st["entity_id"]: st["state"] for st in await admin.call("get_states")
+                   if st["entity_id"].split(".")[0] in ("light", "select", "number", "button", "binary_sensor")
+                   and any(e.get("unique_id", "").startswith(SIM_ID + "_") and e["entity_id"] == st["entity_id"]
+                           for e in await admin.call("config/entity_registry/list"))}
+        check(offline and all(v == "unavailable" for v in offline.values()), "screen controls unavailable while offline", str(offline))
 
         # ---- remove ----------------------------------------------------------------------------
         await admin.call("esp32_screen/layout/save", screen_id=TEMP_ID, layout={"version": 1, "pages": []})

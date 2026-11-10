@@ -382,3 +382,53 @@ The screen reports progress with:
   - With no report for 10 minutes, the install times out.
 - **After the restart.** The screen registers again with its new `sw_version`,
   which updates `installed_version`.
+
+## 6. Screen controls
+
+The backlight and screensaver are HA entities on the screen's device:
+
+| entity | what |
+|---|---|
+| `light.<screen>_backlight` | on/off + brightness (HA 1-255 ⇄ screen 1-100) |
+| `select.<screen>_screensaver` | `off`, `clock`, `flip` |
+| `number.<screen>_screensaver_delay` | idle minutes before the screensaver, 1-60 |
+| `button.<screen>_wake` | wake the screen (leave the screensaver) |
+| `button.<screen>_show_clock` | start the screensaver now |
+| `binary_sensor.<screen>_screensaver` | on while the screensaver is showing |
+
+These entities show what the screen last reported. They are unavailable until
+the screen reports, and while it is offline. The buttons only need the screen
+to be online. Changing an entity does not change its state in HA; the screen
+applies the command and reports the new state.
+
+### `command` event (HA → screen)
+
+Sent on the screen's `esp32_screen/subscribe` subscription:
+
+```jsonc
+{"kind":"command","command":"brightness","value":50}           // 0-100, 0 = backlight off
+{"kind":"command","command":"screensaver_mode","value":"flip"} // "off" | "clock" | "flip"
+{"kind":"command","command":"screensaver_delay","value":600}   // seconds
+{"kind":"command","command":"wake","value":null}
+{"kind":"command","command":"sleep","value":null}              // show the screensaver now
+```
+
+`value` is always present (`null` for `wake`/`sleep`). Turning the backlight on
+without a brightness sends the last brightness above 0 (100 if none is known).
+
+### `esp32_screen/state` (screen → HA)
+
+```json
+{"type":"esp32_screen/state","screen_id":"A0B1C2D3E4F5","brightness":80,
+ "screensaver_mode":"clock","screensaver_delay":300,"screensaver_active":false}
+```
+
+- **Fields.** All are required. `brightness` is 0-100,
+  `screensaver_mode` is `off`, `clock` or `flip`, `screensaver_delay` is seconds
+  (0-86400), and `screensaver_active` is a bool.
+- **When to send.** Send it after every `subscribe`, and whenever any of these
+  values changes, including changes made on the screen's own settings page.
+- **Result.** `null`. An unknown screen gets `not_found`, an invalid value gets
+  `invalid_format`.
+- **Disconnect.** When the screen's last subscription closes, HA forgets the
+  reported state.

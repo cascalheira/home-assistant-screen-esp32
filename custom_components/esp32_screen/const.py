@@ -111,3 +111,7 @@ FIRMWARE_URL: Final = "/api/esp32_screen/firmware"
 FIRMWARE_SCAN_INTERVAL: Final = 60  # seconds
 OTA_TIMEOUT: Final = 600  # seconds
 OTA_STATES: Final = ("downloading", "verifying", "restarting", "failed")
+
+# Screen controls (docs/protocol.md, section 6).
+SCREENSAVER_MODES: Final = ("off", "clock", "flip")
+COMMANDS: Final = ("brightness", "screensaver_mode", "screensaver_delay", "wake", "sleep")
