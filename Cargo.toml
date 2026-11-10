@@ -10,7 +10,7 @@ name = "esp32-screen"
 harness = false # no unit test harness on the device
 
 [profile.release]
-opt-level = "s"
+opt-level = 3
 debug = true # symbols stay in the ELF only, they are not flashed
 
 # Slint's software renderer is the hot path: optimize it for speed, not size.

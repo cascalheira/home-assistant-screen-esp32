@@ -11,6 +11,7 @@
 //!   sdformat ERASE   erase the whole SD card (one FAT32 partition), then restart
 //!   sdcopyslot   copy the other firmware slot to /sdcard/update.bin (tests SD updates)
 //!   saver        start the screensaver now (if enabled in settings)
+//!   bench        time five full-screen redraws of the current page
 //!   flipshot MS  flip the clock's last digit, wait MS, take a screenshot
 //!   page NAME    jump to a page (welcome, networks, home, ...) for inspection
 //!   forget       erase Wi-Fi credentials and return to the wizard
@@ -38,6 +39,7 @@ pub enum ConsoleCommand {
     SdFormat,
     SdCopySlot,
     Saver,
+    Bench,
     FlipTest,
     Page(String),
     Forget,
@@ -93,6 +95,7 @@ pub fn start(tx: Sender<ConsoleCommand>) {
                         continue;
                     }
                     "saver" => ConsoleCommand::Saver,
+                    "bench" => ConsoleCommand::Bench,
                     "flipshot" => {
                         let wait = arg.trim().parse::<u64>().unwrap_or(300);
                         if tx.send(ConsoleCommand::FlipTest).is_err() {

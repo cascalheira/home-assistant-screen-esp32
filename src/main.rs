@@ -94,7 +94,23 @@ fn main() -> anyhow::Result<()> {
     let mut backlight = Backlight::new(channel, timer);
     backlight.set(0);
 
-    let mut display = Display::new()?;
+    // The panel's interrupt (which copies every frame from PSRAM into the
+    // bounce buffers) runs on the core that creates the panel. Create it on
+    // core 0, next to Wi-Fi, while this UI task runs on core 1
+    // (CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1).
+    let mut display = {
+        use esp_idf_svc::hal::cpu::Core;
+        use esp_idf_svc::hal::task::thread::ThreadSpawnConfiguration;
+        ThreadSpawnConfiguration {
+            name: Some(c"lcd-init"),
+            pin_to_core: Some(Core::Core0),
+            ..Default::default()
+        }
+        .set()?;
+        let created = thread::spawn(Display::new).join();
+        ThreadSpawnConfiguration::default().set()?;
+        created.map_err(|_| anyhow::anyhow!("display init thread panicked"))??
+    };
 
     let i2c = I2cDriver::new(
         p.i2c0,
@@ -268,6 +284,29 @@ fn main() -> anyhow::Result<()> {
                         .unwrap_or_else(|| "unset".into())
                 ),
                 ConsoleCommand::Saver => saver.borrow_mut().start_now(&ui, &mut backlight),
+                ConsoleCommand::Bench => {
+                    let mut times = Vec::new();
+                    for _ in 0..5 {
+                        window.request_redraw();
+                        let t = Instant::now();
+                        window.draw_if_needed(|renderer| {
+                            // NewBuffer forces a full repaint.
+                            renderer.set_repaint_buffer_type(RepaintBufferType::NewBuffer);
+                            renderer.render_by_line(display::LineWriter {
+                                target: display.back_buffer(),
+                                line: &mut line_buffer,
+                            });
+                        });
+                        times.push(t.elapsed().as_millis());
+                        display.present();
+                    }
+                    // Back to partial repaints (this also forces one full repaint).
+                    window.draw_if_needed(|renderer| {
+                        renderer.set_repaint_buffer_type(RepaintBufferType::SwappedBuffers);
+                    });
+                    window.request_redraw();
+                    println!("BENCH full redraw ms: {times:?}");
+                }
                 ConsoleCommand::FlipTest => saver.borrow_mut().test_flip(&ui),
                 ConsoleCommand::Sd => match &sd_card {
                     Some(card) => println!(

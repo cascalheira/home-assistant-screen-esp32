@@ -45,6 +45,12 @@ pub struct Display {
     back: usize,
 }
 
+// SAFETY: the handle and buffer pointers belong to the RGB panel driver,
+// which is thread-safe for the calls made here (draw_bitmap). The Display is
+// created on a helper thread pinned to core 0 (so the panel's ISR lands there)
+// and then moved, once, to the UI task, which is its only user afterwards.
+unsafe impl Send for Display {}
+
 impl Display {
     pub fn new() -> Result<Self, EspError> {
         let mut cfg = sys::esp_lcd_rgb_panel_config_t {
@@ -183,10 +189,8 @@ impl slint::platform::software_renderer::LineBufferProvider for LineWriter<'_> {
         render_fn: impl FnOnce(&mut [Rgb565Pixel]),
     ) {
         let start = line * LCD_H_RES;
-        // The renderer blends onto what is already there, so start from the
-        // buffer's current pixels.
-        self.line[range.clone()]
-            .copy_from_slice(&self.target[start + range.start..start + range.end]);
+        // No need to read the old pixels first: the line renderer fills the
+        // range with the window background before drawing.
         render_fn(&mut self.line[range.clone()]);
         self.target[start + range.start..start + range.end].copy_from_slice(&self.line[range]);
     }
