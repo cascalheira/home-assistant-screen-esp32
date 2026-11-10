@@ -62,6 +62,8 @@ pub enum Command {
     },
     /// Wi-Fi just came up: retry the connection now instead of waiting.
     NetworkUp,
+    /// Report the backlight/screensaver state (`esp32_screen/state`).
+    ReportState(crate::saver::ScreenState),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -90,6 +92,12 @@ pub enum Event {
     Layout(Layout),
     States(Vec<(String, TileState)>),
     ActionFailed(String),
+    /// Backlight/screensaver command from Home Assistant (section 6).
+    Command(crate::saver::ScreenCommand),
+    /// Clock settings (section 7).
+    Settings { portuguese: bool, h24: bool },
+    /// Weather and indoor temperature for the clock (section 7).
+    Info { condition: String, weather: String, indoor: String },
 }
 
 pub struct HaHandle {
@@ -326,6 +334,19 @@ impl Worker {
                     msg["value"] = value;
                 }
                 self.request(msg, Pending::Action);
+            }
+            Command::ReportState(state) => {
+                if self.phase == Phase::Live {
+                    let msg = json!({
+                        "type": "esp32_screen/state",
+                        "screen_id": self.screen_id,
+                        "brightness": state.brightness,
+                        "screensaver_mode": state.mode.name(),
+                        "screensaver_delay": state.delay_secs,
+                        "screensaver_active": state.active,
+                    });
+                    self.request(msg, Pending::Action);
+                }
             }
             Command::NetworkUp => {
                 if matches!(self.phase, Phase::Retry { .. }) {
@@ -662,6 +683,37 @@ impl Worker {
                 self.emit(Event::States(states));
             }
             Some("ota") => self.firmware_update(event),
+            Some("command") => {
+                use crate::saver::{Mode, ScreenCommand};
+                let value = &event["value"];
+                let command = match event["command"].as_str().unwrap_or("") {
+                    "brightness" => value.as_u64().map(|v| ScreenCommand::Brightness(v.min(100) as u8)),
+                    "screensaver_mode" => value.as_str().and_then(Mode::parse).map(ScreenCommand::SaverMode),
+                    "screensaver_delay" => value.as_u64().map(|v| ScreenCommand::SaverDelay(v as u32)),
+                    "wake" => Some(ScreenCommand::Wake),
+                    "sleep" => Some(ScreenCommand::Sleep),
+                    _ => None,
+                };
+                match command {
+                    Some(command) => self.emit(Event::Command(command)),
+                    None => log::warn!("ignoring command {event}"),
+                }
+            }
+            Some("settings") => {
+                let settings = &event["settings"];
+                self.emit(Event::Settings {
+                    portuguese: settings["language"].as_str() == Some("pt"),
+                    h24: settings["clock_24h"].as_bool().unwrap_or(true),
+                });
+            }
+            Some("info") => {
+                let text = |key: &str| event[key].as_str().unwrap_or("").to_string();
+                self.emit(Event::Info {
+                    condition: text("weather_condition"),
+                    weather: text("weather_temperature"),
+                    indoor: text("indoor_temperature"),
+                });
+            }
             other => log::debug!("ignoring screen event {other:?}"),
         }
     }

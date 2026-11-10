@@ -182,6 +182,7 @@ fn main() -> anyhow::Result<()> {
     let mut boot_pressed_since: Option<Instant> = None;
     let mut backlight_on = false;
     let started = Instant::now();
+    let mut last_reported: Option<saver::ScreenState> = None;
     let mut marked_healthy = false;
     // One display line in internal RAM for the line-by-line renderer.
     let mut line_buffer = vec![Rgb565Pixel::default(); LCD_H_RES];
@@ -372,6 +373,14 @@ fn main() -> anyhow::Result<()> {
 
         // ---- Wi-Fi/HA events, screensaver and rendering
         app.poll();
+        for command in app.take_screen_commands() {
+            saver.borrow_mut().command(command, &ui, &mut backlight);
+        }
+        let state = saver.borrow().state();
+        if app.take_resubscribed() || Some(state) != last_reported {
+            app.report_state(state);
+            last_reported = Some(state);
+        }
         if sntp.is_none() && app.wifi_connected() {
             match esp_idf_svc::sntp::EspSntp::new_default() {
                 Ok(s) => sntp = Some(s),
@@ -394,7 +403,7 @@ fn main() -> anyhow::Result<()> {
             display.present();
         }
         if !backlight_on {
-            backlight.set(100);
+            saver.borrow().apply_backlight(&mut backlight);
             backlight_on = true;
         }
 

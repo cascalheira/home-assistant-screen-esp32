@@ -5,7 +5,56 @@
 // 200 px font would cost megabytes of flash. Single-colour images are stored
 // as alpha maps and can be scaled, which the flip animation relies on.
 
+import { Icons } from "dashboard.slint";
+
 export global ClockGlyphs {
+    // Weather condition (HA's state of a weather entity) -> icon.
+    pure public function weather-icon(condition: string) -> string {
+        if (condition == "sunny") {
+            return "\u{F0599}";
+        }
+        if (condition == "clear-night") {
+            return "\u{F0594}";
+        }
+        if (condition == "partlycloudy") {
+            return "\u{F0595}";
+        }
+        if (condition == "cloudy") {
+            return "\u{F0590}";
+        }
+        if (condition == "rainy") {
+            return "\u{F0597}";
+        }
+        if (condition == "pouring") {
+            return "\u{F0596}";
+        }
+        if (condition == "lightning") {
+            return "\u{F0593}";
+        }
+        if (condition == "lightning-rainy") {
+            return "\u{F067E}";
+        }
+        if (condition == "snowy") {
+            return "\u{F0598}";
+        }
+        if (condition == "snowy-rainy") {
+            return "\u{F067F}";
+        }
+        if (condition == "hail") {
+            return "\u{F0592}";
+        }
+        if (condition == "fog") {
+            return "\u{F0591}";
+        }
+        if (condition == "windy") {
+            return "\u{F059D}";
+        }
+        if (condition == "windy-variant") {
+            return "\u{F059E}";
+        }
+        return "\u{F05D6}";
+    }
+
     out property <[image]> digits: [
         @image-url("clock/0.png"),
         @image-url("clock/1.png"),
@@ -158,6 +207,9 @@ export component ScreenSaver inherits Rectangle {
     in property <float> p2: 1;
     in property <float> p3: 1;
     in property <string> date;
+    in property <string> weather-condition;
+    in property <string> weather-temperature;
+    in property <string> indoor-temperature;
 
     background: #000000;
 
@@ -203,6 +255,42 @@ export component ScreenSaver inherits Rectangle {
             font-size: 28px;
             color: #8b93a3;
             horizontal-alignment: center;
+        }
+        if root.weather-temperature != "" || root.indoor-temperature != "": HorizontalLayout {
+            alignment: center;
+            spacing: 40px;
+            if root.weather-temperature != "": HorizontalLayout {
+                spacing: 10px;
+                Text {
+                    text: ClockGlyphs.weather-icon(root.weather-condition);
+                    font-family: Icons.family;
+                    font-size: 28px;
+                    color: #8b93a3;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: root.weather-temperature;
+                    font-size: 28px;
+                    color: #8b93a3;
+                    vertical-alignment: center;
+                }
+            }
+            if root.indoor-temperature != "": HorizontalLayout {
+                spacing: 10px;
+                Text {
+                    text: "\u{F0F54}";
+                    font-family: Icons.family;
+                    font-size: 28px;
+                    color: #8b93a3;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: root.indoor-temperature;
+                    font-size: 28px;
+                    color: #8b93a3;
+                    vertical-alignment: center;
+                }
+            }
         }
     }
 }

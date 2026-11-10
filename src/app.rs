@@ -133,6 +133,11 @@ impl State {
 
 pub struct App {
     shared: Rc<Shared>,
+    /// Display commands for the main loop (it owns the backlight and the
+    /// screensaver).
+    screen_commands: Rc<RefCell<Vec<crate::saver::ScreenCommand>>>,
+    /// Set when Home Assistant (re)subscribes: the screen state must be sent.
+    resubscribed: Rc<std::cell::Cell<bool>>,
     wifi_events: Receiver<wifi::Event>,
     ha_events: Receiver<ha::Event>,
     updates: Receiver<crate::ota::Status>,
@@ -231,6 +236,8 @@ impl App {
 
         Self {
             shared,
+            screen_commands: Rc::default(),
+            resubscribed: Rc::default(),
             wifi_events: wifi.events,
             ha_events: ha.events,
             updates,
@@ -243,7 +250,18 @@ impl App {
             self.shared.on_wifi_event(event);
         }
         while let Ok(event) = self.ha_events.try_recv() {
-            self.shared.on_ha_event(event);
+            match event {
+                ha::Event::Command(command) => self.screen_commands.borrow_mut().push(command),
+                ha::Event::Settings { portuguese, h24 } => self
+                    .screen_commands
+                    .borrow_mut()
+                    .push(crate::saver::ScreenCommand::ClockFormat { portuguese, h24 }),
+                ha::Event::Status(Status::Connected) => {
+                    self.resubscribed.set(true);
+                    self.shared.on_ha_event(ha::Event::Status(Status::Connected));
+                }
+                event => self.shared.on_ha_event(event),
+            }
         }
         while let Ok(status) = self.updates.try_recv() {
             self.shared.on_update(status);
@@ -253,6 +271,20 @@ impl App {
 
     pub fn forget_wifi(&self) {
         self.shared.forget_wifi();
+    }
+
+    /// Display commands received since the last call.
+    pub fn take_screen_commands(&self) -> Vec<crate::saver::ScreenCommand> {
+        std::mem::take(&mut *self.screen_commands.borrow_mut())
+    }
+
+    /// True once after each (re)subscription to Home Assistant.
+    pub fn take_resubscribed(&self) -> bool {
+        self.resubscribed.replace(false)
+    }
+
+    pub fn report_state(&self, state: crate::saver::ScreenState) {
+        self.shared.ha.send(ha::Command::ReportState(state));
     }
 
     pub fn wifi_connected(&self) -> bool {
@@ -979,6 +1011,13 @@ impl Shared {
                 self.refresh_popups();
             }
             ha::Event::ActionFailed(message) => ui.set_toast(message.into()),
+            ha::Event::Info { condition, weather, indoor } => {
+                ui.set_clock_weather_condition(condition.into());
+                ui.set_clock_weather_temperature(weather.into());
+                ui.set_clock_indoor_temperature(indoor.into());
+            }
+            // Routed to the main loop by App::poll.
+            ha::Event::Command(_) | ha::Event::Settings { .. } => {}
         }
     }
 

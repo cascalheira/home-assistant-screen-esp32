@@ -1,9 +1,11 @@
-//! Optional screensaver clock (plain or flip clock).
+//! Backlight brightness and the optional screensaver clock (plain or flip).
 //!
-//! Starts after a period without touches while the dashboard is showing, once
-//! the time is known (SNTP, timezone from Home Assistant). The touch that wakes
-//! the screen is swallowed so it doesn't also press a tile. Settings live in
-//! NVS (namespace "display").
+//! The screensaver starts after a period without touches while the dashboard
+//! is showing, once the time is known (SNTP, timezone from Home Assistant).
+//! The touch that wakes the screen is swallowed so it doesn't also press a
+//! tile. Home Assistant can change all of this (docs/protocol.md section 6),
+//! and the screen reports its state back. Settings live in NVS (namespace
+//! "display").
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -18,45 +20,22 @@ use crate::{AppWindow, Page};
 
 const NVS_NAMESPACE: &str = "display";
 const NVS_MODE: &str = "saver";
-const NVS_DELAY: &str = "saver_delay";
+/// Old setting: index into the settings page's options.
+const NVS_DELAY_INDEX: &str = "saver_delay";
+const NVS_DELAY_SECS: &str = "saver_secs";
+const NVS_BRIGHTNESS: &str = "brightness";
+const NVS_LANGUAGE: &str = "lang";
+const NVS_CLOCK_24H: &str = "clock24";
 
-/// Matches the options in the settings page.
-const DELAYS: [Duration; 3] = [
-    Duration::from_secs(60),
-    Duration::from_secs(5 * 60),
-    Duration::from_secs(15 * 60),
-];
+/// The delays offered on the settings page.
+const DELAY_OPTIONS: [u32; 3] = [60, 5 * 60, 15 * 60];
 const FLIP_DURATION: Duration = Duration::from_millis(650);
-const BRIGHTNESS_AWAKE: u8 = 100;
+/// Backlight while the screensaver shows (never brighter than the setting).
 const BRIGHTNESS_SAVER: u8 = 35;
 
-const DAYS: [&str; 7] = [
-    "Sunday",
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-];
-const MONTHS: [&str; 12] = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-];
-
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
-enum Mode {
+pub enum Mode {
     Off = 0,
     Clock = 1,
     Flip = 2,
@@ -70,18 +49,66 @@ impl Mode {
             _ => Self::Off,
         }
     }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "off" => Some(Self::Off),
+            "clock" => Some(Self::Clock),
+            "flip" => Some(Self::Flip),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Clock => "clock",
+            Self::Flip => "flip",
+        }
+    }
+}
+
+/// What the screen reports to Home Assistant (`esp32_screen/state`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ScreenState {
+    pub brightness: u8,
+    pub mode: Mode,
+    pub delay_secs: u32,
+    pub active: bool,
+}
+
+/// Commands from Home Assistant (docs/protocol.md section 6) and the clock
+/// settings (section 7).
+#[derive(Clone, Debug)]
+pub enum ScreenCommand {
+    Brightness(u8),
+    SaverMode(Mode),
+    SaverDelay(u32),
+    Wake,
+    Sleep,
+    ClockFormat { portuguese: bool, h24: bool },
 }
 
 pub struct Saver {
     nvs: Option<EspNvs<NvsDefault>>,
     mode: Mode,
-    delay: usize,
+    delay_secs: u32,
+    /// Backlight 0-100 while awake; 0 = off.
+    brightness: u8,
+    /// Last brightness above 0, restored by a touch on a dark screen.
+    last_brightness: u8,
+    portuguese: bool,
+    h24: bool,
     active: bool,
+    /// The screensaver was started on request (`sleep`) while it is off in
+    /// the settings: show the plain clock until woken.
+    forced: bool,
     /// Set while the finger that woke the screen is still down.
     swallowing: bool,
     last_input: Instant,
     /// Hours and minutes shown, as `hour * 60 + minute`.
     shown_minute: Option<i32>,
+    /// Digit per card; -1 = blank (leading zero of a 12-hour clock).
     digits: [i32; 4],
     prev: [i32; 4],
     /// Flip progress per digit (0-1), driven from `tick`.
@@ -92,21 +119,32 @@ pub struct Saver {
 impl Saver {
     pub fn new(nvs_partition: EspDefaultNvsPartition, ui: &AppWindow) -> Rc<RefCell<Self>> {
         let nvs = EspNvs::new(nvs_partition, NVS_NAMESPACE, true)
-            .map_err(|e| log::warn!("screensaver settings unavailable: {e}"))
+            .map_err(|e| log::warn!("display settings unavailable: {e}"))
             .ok();
-        let read = |key| {
+        let u8_or = |key, default| {
             nvs.as_ref()
                 .and_then(|n| n.get_u8(key).ok().flatten())
-                .unwrap_or(0)
+                .unwrap_or(default)
         };
-        let mode = Mode::from_u8(read(NVS_MODE));
-        let delay = (read(NVS_DELAY) as usize).min(DELAYS.len() - 1);
+        let mode = Mode::from_u8(u8_or(NVS_MODE, 0));
+        let delay_secs = nvs
+            .as_ref()
+            .and_then(|n| n.get_u32(NVS_DELAY_SECS).ok().flatten())
+            .unwrap_or_else(|| DELAY_OPTIONS[(u8_or(NVS_DELAY_INDEX, 0) as usize).min(2)]);
+        let brightness = u8_or(NVS_BRIGHTNESS, 100).min(100);
+        let portuguese = u8_or(NVS_LANGUAGE, 0) == 1;
+        let h24 = u8_or(NVS_CLOCK_24H, 1) == 1;
 
         let saver = Rc::new(RefCell::new(Self {
             nvs,
             mode,
-            delay,
+            delay_secs,
+            brightness,
+            last_brightness: brightness.max(1),
+            portuguese,
+            h24,
             active: false,
+            forced: false,
             swallowing: false,
             last_input: Instant::now(),
             shown_minute: None,
@@ -115,44 +153,123 @@ impl Saver {
             progress: [1.0; 4],
             flip_started: [None; 4],
         }));
-
-        {
-            let s = saver.borrow();
-            ui.set_saver_mode(s.mode as i32);
-            ui.set_saver_delay(s.delay as i32);
-        }
+        saver.borrow().show_settings(ui);
 
         let weak = ui.as_weak();
         let s = saver.clone();
         ui.on_saver_mode_picked(move |index| {
             let mut s = s.borrow_mut();
-            s.mode = Mode::from_u8(index.clamp(0, 2) as u8);
-            let value = s.mode as u8;
-            s.save(NVS_MODE, value);
-            s.last_input = Instant::now();
+            s.set_mode(Mode::from_u8(index.clamp(0, 2) as u8));
             if let Some(ui) = weak.upgrade() {
-                ui.set_saver_mode(s.mode as i32);
+                s.show_settings(&ui);
             }
         });
         let weak = ui.as_weak();
         let s = saver.clone();
         ui.on_saver_delay_picked(move |index| {
             let mut s = s.borrow_mut();
-            s.delay = (index.max(0) as usize).min(DELAYS.len() - 1);
-            let value = s.delay as u8;
-            s.save(NVS_DELAY, value);
-            s.last_input = Instant::now();
+            s.set_delay(DELAY_OPTIONS[(index.max(0) as usize).min(DELAY_OPTIONS.len() - 1)]);
             if let Some(ui) = weak.upgrade() {
-                ui.set_saver_delay(s.delay as i32);
+                s.show_settings(&ui);
             }
         });
         saver
     }
 
-    fn save(&mut self, key: &str, value: u8) {
+    fn show_settings(&self, ui: &AppWindow) {
+        ui.set_saver_mode(self.mode as i32);
+        let index = DELAY_OPTIONS.iter().position(|&d| d == self.delay_secs);
+        ui.set_saver_delay(index.map(|i| i as i32).unwrap_or(-1));
+    }
+
+    fn save_u8(&mut self, key: &str, value: u8) {
         if let Some(nvs) = &mut self.nvs {
             if let Err(e) = nvs.set_u8(key, value) {
-                log::warn!("saving screensaver setting failed: {e}");
+                log::warn!("saving display setting {key} failed: {e}");
+            }
+        }
+    }
+
+    fn set_mode(&mut self, mode: Mode) {
+        self.mode = mode;
+        self.save_u8(NVS_MODE, mode as u8);
+        self.last_input = Instant::now();
+    }
+
+    fn set_delay(&mut self, secs: u32) {
+        self.delay_secs = secs.clamp(10, 86_400);
+        if let Some(nvs) = &mut self.nvs {
+            if let Err(e) = nvs.set_u32(NVS_DELAY_SECS, self.delay_secs) {
+                log::warn!("saving the screensaver delay failed: {e}");
+            }
+        }
+        self.last_input = Instant::now();
+    }
+
+    fn backlight_level(&self) -> u8 {
+        if self.active {
+            self.brightness.min(BRIGHTNESS_SAVER)
+        } else {
+            self.brightness
+        }
+    }
+
+    /// Backlight level for the current state (used once the first frame is up).
+    pub fn apply_backlight(&self, backlight: &mut Backlight) {
+        backlight.set(self.backlight_level());
+    }
+
+    pub fn state(&self) -> ScreenState {
+        ScreenState {
+            brightness: self.brightness,
+            mode: self.mode,
+            delay_secs: self.delay_secs,
+            active: self.active,
+        }
+    }
+
+    pub fn command(&mut self, command: ScreenCommand, ui: &AppWindow, backlight: &mut Backlight) {
+        log::info!("display command: {command:?}");
+        match command {
+            ScreenCommand::Brightness(value) => {
+                self.brightness = value.min(100);
+                if self.brightness > 0 {
+                    self.last_brightness = self.brightness;
+                }
+                self.save_u8(NVS_BRIGHTNESS, self.brightness);
+                self.apply_backlight(backlight);
+            }
+            ScreenCommand::SaverMode(mode) => {
+                self.set_mode(mode);
+                self.show_settings(ui);
+            }
+            ScreenCommand::SaverDelay(secs) => {
+                self.set_delay(secs);
+                self.show_settings(ui);
+            }
+            ScreenCommand::Wake => {
+                self.last_input = Instant::now();
+                if self.active {
+                    self.stop(ui, backlight);
+                }
+            }
+            ScreenCommand::Sleep => {
+                if !self.active {
+                    self.forced = self.mode == Mode::Off;
+                    self.start(ui, backlight);
+                }
+            }
+            ScreenCommand::ClockFormat { portuguese, h24 } => {
+                if (portuguese, h24) != (self.portuguese, self.h24) {
+                    self.portuguese = portuguese;
+                    self.h24 = h24;
+                    self.save_u8(NVS_LANGUAGE, portuguese as u8);
+                    self.save_u8(NVS_CLOCK_24H, h24 as u8);
+                    if self.active {
+                        // Redraw the clock in the new format.
+                        self.shown_minute = None;
+                    }
+                }
             }
         }
     }
@@ -161,11 +278,20 @@ impl Saver {
     /// reach the UI because it woke the screen.
     pub fn on_press(&mut self, ui: &AppWindow, backlight: &mut Backlight, x: f32, y: f32) -> bool {
         self.last_input = Instant::now();
+        if self.brightness == 0 {
+            // The backlight was turned off from Home Assistant: a touch turns
+            // it back on instead of pressing something unseen.
+            log::info!("backlight turned on by a touch at {x:.0},{y:.0}");
+            self.brightness = self.last_brightness.max(1);
+            self.save_u8(NVS_BRIGHTNESS, self.brightness);
+            self.swallowing = true;
+        }
         if self.active {
             log::info!("woken by a touch at {x:.0},{y:.0}");
             self.stop(ui, backlight);
             self.swallowing = true;
         }
+        self.apply_backlight(backlight);
         self.swallowing
     }
 
@@ -188,8 +314,10 @@ impl Saver {
         log::info!("screensaver on");
         ui.set_climate_open(false);
         ui.set_dimmer_open(false);
+        ui.set_sheet_open(false);
+        ui.set_saver_flip(self.mode == Mode::Flip);
         // Show the current time without flipping into it.
-        let digits = digits_of(&now);
+        let digits = self.digits_of(&now);
         for (i, d) in digits.iter().enumerate() {
             self.digits[i] = *d;
             self.prev[i] = *d;
@@ -198,23 +326,24 @@ impl Saver {
             self.push(ui, i);
         }
         self.shown_minute = Some(now.tm_hour * 60 + now.tm_min);
-        ui.set_clock_date(date_text(&now).into());
+        ui.set_clock_date(self.date_text(&now).into());
         ui.set_saver_active(true);
-        backlight.set(BRIGHTNESS_SAVER);
         self.active = true;
+        self.apply_backlight(backlight);
     }
 
     fn stop(&mut self, ui: &AppWindow, backlight: &mut Backlight) {
         log::info!("screensaver off");
         ui.set_saver_active(false);
-        backlight.set(BRIGHTNESS_AWAKE);
         self.active = false;
+        self.forced = false;
+        self.apply_backlight(backlight);
     }
 
     /// Call from the UI loop.
     pub fn tick(&mut self, ui: &AppWindow, backlight: &mut Backlight) {
         if !self.active {
-            let idle = self.last_input.elapsed() >= DELAYS[self.delay];
+            let idle = self.last_input.elapsed() >= Duration::from_secs(self.delay_secs as u64);
             if self.mode != Mode::Off
                 && idle
                 && !self.swallowing
@@ -224,10 +353,11 @@ impl Saver {
             }
             return;
         }
-        if self.mode == Mode::Off {
+        if self.mode == Mode::Off && !self.forced {
             self.stop(ui, backlight);
             return;
         }
+        ui.set_saver_flip(self.mode == Mode::Flip);
         self.animate_flips(ui);
         let Some(now) = local_time() else { return };
         let minute = now.tm_hour * 60 + now.tm_min;
@@ -235,10 +365,10 @@ impl Saver {
             return;
         }
         self.shown_minute = Some(minute);
-        for (i, d) in digits_of(&now).iter().enumerate() {
+        for (i, d) in self.digits_of(&now).iter().enumerate() {
             self.set_digit(ui, i, *d);
         }
-        ui.set_clock_date(date_text(&now).into());
+        ui.set_clock_date(self.date_text(&now).into());
     }
 
     pub fn is_active(&self) -> bool {
@@ -249,6 +379,28 @@ impl Saver {
     pub fn test_flip(&mut self, ui: &AppWindow) {
         let next = (self.digits[3] + 1) % 10;
         self.set_digit(ui, 3, next);
+    }
+
+    fn digits_of(&self, tm: &sys::tm) -> [i32; 4] {
+        let hour = if self.h24 {
+            tm.tm_hour
+        } else {
+            match tm.tm_hour % 12 {
+                0 => 12,
+                h => h,
+            }
+        };
+        let first = if !self.h24 && hour < 10 { -1 } else { hour / 10 };
+        [first, hour % 10, tm.tm_min / 10, tm.tm_min % 10]
+    }
+
+    fn date_text(&self, tm: &sys::tm) -> String {
+        let date = date_text(tm, self.portuguese);
+        if self.h24 {
+            date
+        } else {
+            format!("{date} · {}", if tm.tm_hour < 12 { "AM" } else { "PM" })
+        }
     }
 
     /// Changes one digit and starts its flip.
@@ -338,17 +490,33 @@ pub fn set_timezone(posix_tz: &str) {
     log::info!("timezone set to {posix_tz}");
 }
 
-fn digits_of(tm: &sys::tm) -> [i32; 4] {
-    [
-        tm.tm_hour / 10,
-        tm.tm_hour % 10,
-        tm.tm_min / 10,
-        tm.tm_min % 10,
-    ]
-}
+const DAYS_EN: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const MONTHS_EN: [&str; 12] = [
+    "January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+    "November", "December",
+];
+const DAYS_PT: [&str; 7] = [
+    "Domingo",
+    "Segunda-feira",
+    "Terça-feira",
+    "Quarta-feira",
+    "Quinta-feira",
+    "Sexta-feira",
+    "Sábado",
+];
+const MONTHS_PT: [&str; 12] = [
+    "janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro",
+    "novembro", "dezembro",
+];
 
-fn date_text(tm: &sys::tm) -> String {
-    let day = DAYS.get(tm.tm_wday as usize).copied().unwrap_or("");
-    let month = MONTHS.get(tm.tm_mon as usize).copied().unwrap_or("");
-    format!("{day}, {} {month}", tm.tm_mday)
+/// "Tuesday, 10 November" / "Terça-feira, 10 de novembro".
+fn date_text(tm: &sys::tm, portuguese: bool) -> String {
+    let (days, months) = if portuguese { (DAYS_PT, MONTHS_PT) } else { (DAYS_EN, MONTHS_EN) };
+    let day = days.get(tm.tm_wday as usize).copied().unwrap_or("");
+    let month = months.get(tm.tm_mon as usize).copied().unwrap_or("");
+    if portuguese {
+        format!("{day}, {} de {month}", tm.tm_mday)
+    } else {
+        format!("{day}, {} {month}", tm.tm_mday)
+    }
 }

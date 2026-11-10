@@ -203,6 +203,10 @@ export component AppWindow inherits Window {
     in property <int> saver-mode; // 0 off, 1 clock, 2 flip clock
     in property <int> saver-delay; // index into the delay options
     in property <bool> saver-active;
+    in property <bool> saver-flip;
+    in property <string> clock-weather-condition;
+    in property <string> clock-weather-temperature;
+    in property <string> clock-indoor-temperature;
     in property <int> clock-d0;
     in property <int> clock-d1;
     in property <int> clock-d2;
@@ -1018,7 +1022,10 @@ export component AppWindow inherits Window {
     // ---- Screensaver: above everything. Touches never reach it; Rust
     // swallows the waking touch.
     if root.saver-active: ScreenSaver {
-        flip: root.saver-mode == 2;
+        flip: root.saver-flip;
+        weather-condition: root.clock-weather-condition;
+        weather-temperature: root.clock-weather-temperature;
+        indoor-temperature: root.clock-indoor-temperature;
         d0: root.clock-d0;
         prev0: root.clock-prev0;
         p0: root.clock-p0;
