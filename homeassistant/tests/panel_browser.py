@@ -264,6 +264,49 @@ async def main() -> int:
             await panel.locator("[data-action='save']").click()
             await panel.locator(".unsaved").wait_for(state="detached", timeout=5000)
             check(len((await saved_layout(SIM_ID))["pages"]) == n_pages, "page deleted and saved")
+
+            # New tile kinds (the "Kinds" page that e2e.py saves on the simulated screen).
+            kinds_tab = panel.locator(".tab", has_text="Kinds")
+            if await kinds_tab.count():
+                await kinds_tab.click()
+                await page.wait_for_timeout(500)
+                texts = " ".join(await panel.locator(".tile").all_inner_texts())
+                check(all(w in texts for w in ("Run", "°C", "Locked", "Disarmed")) and ("Playing" in texts or "Paused" in texts),
+                      "preview renders scene/sensor/lock/alarm/media tiles", " ".join(texts.split())[:160])
+                await panel.locator(".tile", has_text="Front Door").click()
+                kinds = await panel.locator(".kind").evaluate_all("els => els.map(e => e.dataset.kind)")
+                check(kinds == ["light", "gate", "garage", "valve", "climate", "toggle", "scene", "sensor", "blind", "lock", "alarm", "media"],
+                      "kind picker has the 12 kinds", str(kinds))
+                entity_ids = await panel.locator(".entity").evaluate_all("els => els.map(e => e.dataset.entity)")
+                check(entity_ids and all(e.startswith("lock.") for e in entity_ids), "lock kind lists only lock entities", f"{len(entity_ids)} entities")
+                await page.screenshot(path="/tmp/ha-editor-14-kinds.png")
+                await panel.locator(".kind[data-kind='media']").click()
+                entity_ids = await panel.locator(".entity").evaluate_all("els => els.map(e => e.dataset.entity)")
+                check(entity_ids and all(e.startswith("media_player.") for e in entity_ids), "media kind lists only media players", f"{len(entity_ids)} entities")
+                page.once("dialog", lambda d: asyncio.ensure_future(d.accept()))
+                await panel.locator("[data-action='discard']").click()
+            else:
+                check(False, "the simulated screen has the Kinds page (run e2e.py first)")
+
+            # Screen settings card.
+            settings = panel.locator("#settings")
+            await settings.locator("select[data-change='setting-weather_entity']").select_option("weather.demo_weather_south")
+            await page.wait_for_timeout(500)
+            await settings.locator("select[data-change='setting-indoor_temperature_entity']").select_option("sensor.living_room_temperature")
+            await page.wait_for_timeout(500)
+            await settings.locator("select[data-change='setting-language']").select_option("pt")
+            await page.wait_for_timeout(500)
+            await settings.locator("input[data-change='setting-clock_24h']").uncheck()
+            await page.wait_for_timeout(800)
+            screens = (await ws.call("esp32_screen/screens"))["screens"]
+            stored = next(s_ for s_ in screens if s_["screen_id"] == SIM_ID)["settings"]
+            check(stored == {"weather_entity": "weather.demo_weather_south", "indoor_temperature_entity": "sensor.living_room_temperature",
+                             "language": "pt", "clock_24h": False}, "screen settings saved from the panel", str(stored))
+            await settings.scroll_into_view_if_needed()
+            await page.screenshot(path="/tmp/ha-editor-14-settings.png", full_page=True)
+            await ws.call("esp32_screen/screen/update", screen_id=SIM_ID, settings={
+                "weather_entity": "", "indoor_temperature_entity": "", "language": "en", "clock_24h": True})
+
             light_errors = list(page.errors)  # type: ignore[attr-defined]
             await page.context.close()
 

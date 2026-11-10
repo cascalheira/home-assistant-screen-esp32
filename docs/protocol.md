@@ -143,10 +143,26 @@ Result: `null`, then events on the same id:
 {"kind":"states","tiles":{"t1":{ /* tile view model */ }, "t2":{...}}}
 ```
 
-Order: `layout`, then `states` with every tile. After that, `states` carries only
-tiles whose view model changed. Saving the layout in the editor sends `layout`
-again followed by all `states`. While a subscription is open the screen counts as
-online.
+Order: `layout`, then `states` with every tile, then `settings` and `info`
+(section 7). After that, `states` carries only tiles whose view model changed.
+Saving the layout in the editor sends `layout` again, followed by all `states`,
+`settings` and `info`. While a subscription is open the screen counts as online.
+
+All event kinds on this subscription:
+
+| `kind` | section | what |
+|---|---|---|
+| `layout` | 3 | the layout model, labels resolved |
+| `states` | 3 | tile view models (all, then only changed ones) |
+| `settings` | 7 | language and 12/24-hour clock |
+| `info` | 7 | weather and indoor temperature for the clock |
+| `command` | 6 | backlight and screensaver commands |
+| `ota` | 5 | install a firmware update |
+| `notify` | 8 | show a notification |
+| `dismiss` | 8 | close a notification |
+
+The firmware should ignore kinds it does not know, so that new kinds can be
+added later.
 
 ### Tile view model
 
