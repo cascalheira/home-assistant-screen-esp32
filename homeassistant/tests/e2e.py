@@ -22,7 +22,7 @@ from typing import Any
 import aiohttp
 
 sys.path.insert(0, str(Path(__file__).parent))
-from device_sim import VM_KEYS, CommandError, HAWebSocket, ScreenSim, login_flow, refresh_token  # noqa: E402
+from device_sim import VM_KEYS, CommandError, HAWebSocket, ScreenSim, login_flow, refresh_token
 
 SIM_ID = "AABBCCDDEEFF"
 # The page icons the firmware can draw, as specified (docs/protocol.md).

@@ -21,7 +21,7 @@ from pathlib import Path
 import aiohttp
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import local  # noqa: E402
+import local
 
 OWNER = (*local.admin(), "Dev")
 SCREEN_USER = (*local.screen_user(), "Screen")

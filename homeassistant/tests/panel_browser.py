@@ -24,10 +24,10 @@ import aiohttp
 from playwright.async_api import Page, async_playwright
 
 sys.path.insert(0, str(Path(__file__).parent))
-from device_sim import HAWebSocket, login_flow  # noqa: E402
+from device_sim import HAWebSocket, login_flow
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "dev"))
-import local  # noqa: E402
+import local
 
 SIM_ID = "AABBCCDDEEFF"
 REAL_ID = local.real_screen_id()  # "" when no real screen is registered
@@ -145,7 +145,7 @@ async def main() -> int:
                     timeout=15000,
                 )
                 drawn = 46
-            except Exception:  # noqa: BLE001
+            except Exception:
                 drawn = -1
             check(drawn == 46, "all 46 page icons exist in HA's icon set and render in the picker")
             await page.screenshot(path="/tmp/ha-editor-13-icon-picker.png")

@@ -88,9 +88,9 @@ def resolve_label(hass: HomeAssistant, tile: dict[str, Any]) -> str:
     if tile.get("label"):
         return str(tile["label"])
     entity_id: str = tile["entity_id"]
-    if (state := hass.states.get(entity_id)) is not None:
-        if name := state.attributes.get(ATTR_FRIENDLY_NAME):
-            return str(name)
+    state = hass.states.get(entity_id)
+    if state is not None and (name := state.attributes.get(ATTR_FRIENDLY_NAME)):
+        return str(name)
     return entity_id.split(".", 1)[1].replace("_", " ").capitalize()
 
 

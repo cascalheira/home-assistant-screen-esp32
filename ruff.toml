@@ -1,0 +1,19 @@
+# Lint settings for the Python side (Home Assistant integration and its dev
+# tooling). CI runs: ruff check custom_components homeassistant
+target-version = "py313"
+line-length = 120
+extend-exclude = ["scripts", "target", ".embuild", "homeassistant/dev-config"]
+
+[lint]
+select = ["E", "F", "W", "B", "UP", "SIM", "ASYNC", "RUF"]
+ignore = [
+    "E501",    # long lines are fine in tests; the integration stays short anyway
+    "SIM105",  # try/except/pass reads fine
+    "SIM905",  # str.split() for word lists
+    "RUF001",  # ambiguous unicode (°, –, → are intended)
+    "RUF002",
+    "RUF003",
+]
+
+[lint.per-file-ignores]
+"homeassistant/tests/*" = ["ASYNC109", "ASYNC240"]

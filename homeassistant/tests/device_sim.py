@@ -198,6 +198,7 @@ class ScreenSim:
         self.tiles: dict[str, dict[str, Any]] = {}
         self.events: list[dict[str, Any]] = []
         self._event_cond = asyncio.Condition()
+        self._tasks: set[asyncio.Task[Any]] = set()
         self.ota_mode = "ignore"  # ignore | apply | fail (CLI --ota)
 
     def log(self, *args: Any) -> None:
@@ -251,11 +252,16 @@ class ScreenSim:
         elif event.get("kind") == "ota":
             self.log(f"ota: version {event['version']} size {event['size']} sha256 {event['sha256'][:12]}... url {event['url']}")
             if self.ota_mode != "ignore":
-                asyncio.get_running_loop().create_task(self.perform_ota(event, fail=self.ota_mode == "fail"))
+                self._spawn(self.perform_ota(event, fail=self.ota_mode == "fail"))
         else:
             self.log("unknown event:", event)
-        loop = asyncio.get_running_loop()
-        loop.create_task(self._notify())
+        self._spawn(self._notify())
+
+    def _spawn(self, coro: Any) -> None:
+        """Run a background task, keeping a reference until it is done."""
+        task = asyncio.get_running_loop().create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     async def _notify(self) -> None:
         async with self._event_cond:

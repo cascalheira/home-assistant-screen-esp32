@@ -16,8 +16,8 @@ import aiohttp
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tests"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import local  # noqa: E402
-from device_sim import HAWebSocket, login_flow  # noqa: E402
+import local
+from device_sim import HAWebSocket, login_flow
 
 
 def tile(

@@ -1,0 +1,90 @@
+# Home Assistant side: lint, hassfest, HACS validation and the end-to-end
+# protocol test against a real Home Assistant in Docker.
+name: Integration
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "custom_components/**"
+      - "homeassistant/**"
+      - "docs/protocol.md"
+      - "hacs.json"
+      - "ruff.toml"
+      - ".github/workflows/integration.yml"
+  pull_request:
+    paths:
+      - "custom_components/**"
+      - "homeassistant/**"
+      - "docs/protocol.md"
+      - "hacs.json"
+      - "ruff.toml"
+      - ".github/workflows/integration.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: ruff
+        run: uvx ruff check --output-format github custom_components homeassistant
+      - name: Panel JavaScript parses
+        run: node --check custom_components/esp32_screen/frontend/esp32-screen-panel.js
+
+  hassfest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
+
+  hacs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: hacs/action@main
+        with:
+          category: integration
+          # Brand images live in home-assistant/brands; not submitted (yet).
+          ignore: brands
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Start Home Assistant (stable) with the integration
+        run: |
+          # Folders the tests write into must belong to the runner, not to
+          # root inside the container.
+          mkdir -p homeassistant/dev-config/esp32_screen/firmware
+          homeassistant/dev/run-ha.sh
+          docker exec esp32-screen-ha python3 -c "from homeassistant.const import __version__ as v; print('Home Assistant', v)"
+
+      - name: Onboard (random credentials in dev-config/dev-local.json)
+        run: uv run --with aiohttp homeassistant/dev/onboard.py
+
+      - name: End-to-end test
+        run: uv run --with aiohttp homeassistant/tests/e2e.py
+
+      - name: Home Assistant log
+        if: always()
+        run: docker logs esp32-screen-ha > ha.log 2>&1 || true
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: home-assistant-log
+          path: |
+            ha.log
+            homeassistant/dev-config/home-assistant.log
+          if-no-files-found: ignore

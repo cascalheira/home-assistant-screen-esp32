@@ -186,6 +186,10 @@ run `docker restart esp32-screen-ha`. Config and state live in
 `homeassistant/dev-config/`, which git ignores. Firmware images for the dev
 instance go in `homeassistant/dev-config/esp32_screen/firmware/`.
 
+CI (`.github/workflows/integration.yml`) runs ruff, hassfest, the HACS check and
+`e2e.py` against a fresh Home Assistant in Docker. Run `uvx ruff check
+custom_components homeassistant` locally before pushing.
+
 ## Notes
 
 - **Slint licence.** Slint is GPLv3, or royalty-free for desktop, mobile and
