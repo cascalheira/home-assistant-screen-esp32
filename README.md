@@ -160,6 +160,12 @@ backlight (a light), the screensaver mode and delay, buttons to wake the
 screen or show the clock, and a sensor that is on while the screensaver
 shows. Use them in automations, for example to dim the screens at night.
 
+**Notifications.** The `esp32_screen.notify` action shows a message on one,
+several or all screens. It can include a camera snapshot or an image entity,
+and can stay up for a number of seconds or until it is dismissed with
+`esp32_screen.dismiss`. For example, a doorbell automation can send the
+camera picture with a 60 s timeout.
+
 **Firmware updates.** Copy a firmware image (`.bin`, project `esp32-screen`) into
 `<HA config>/esp32_screen/firmware/`. Within a minute every screen's
 *Firmware* update entity offers the highest version in that folder. Install it

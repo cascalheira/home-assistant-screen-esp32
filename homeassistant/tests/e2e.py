@@ -205,6 +205,96 @@ async def settings_tests(admin: HAWebSocket, sim: ScreenSim) -> None:
         check(False, "clearing the entities -> empty info", "no info event")
 
 
+def jpeg_info(data: bytes) -> tuple[str, int, int]:
+    """(SOF marker, width, height) of a JPEG: SOF0 = baseline, SOF2 = progressive."""
+    i = 2
+    while i < len(data) - 9:
+        if data[i] != 0xFF:
+            i += 1
+            continue
+        marker = data[i + 1]
+        length = int.from_bytes(data[i + 2:i + 4], "big")
+        if marker in (0xC0, 0xC1, 0xC2):
+            height = int.from_bytes(data[i + 5:i + 7], "big")
+            width = int.from_bytes(data[i + 7:i + 9], "big")
+            return f"SOF{marker - 0xC0}", width, height
+        i += 2 + length
+    return "?", 0, 0
+
+
+async def notification_tests(admin: HAWebSocket, sim: ScreenSim, url: str) -> None:
+    """Section 8: esp32_screen.notify / dismiss, notification images."""
+    devices = await admin.call("config/device_registry/list")
+    device_id = next(d["id"] for d in devices if ["esp32_screen", SIM_ID] in d["identifiers"])
+
+    async def notify(**data: Any) -> dict[str, Any]:
+        result = await admin.call("call_service", domain="esp32_screen", service="notify",
+                                  service_data=data, return_response=True)
+        return result.get("response") or {}
+
+    mark = sim.mark()
+    response = await notify(device_id=device_id, title="Front door", message="Someone is at the door")
+    try:
+        ev = await sim.wait_for(lambda e: e.get("kind") == "notify", 5, since=mark)
+        check(ev == {"kind": "notify", "id": response.get("id"), "title": "Front door", "message": "Someone is at the door",
+                     "image_url": "", "timeout": 30} and len(ev["id"]) == 16,
+              "notify -> notify event (no image, default timeout 30)", str(ev))
+    except TimeoutError:
+        check(False, "notify -> notify event", "no event")
+    check(response.get("screens") == [SIM_ID], "notify response has the id and the screens", str(response))
+
+    for entity, expect_size, name in (("camera.demo_camera", None, "camera"), ("image.dev_picture", (300, 300), "image entity")):
+        mark = sim.mark()
+        try:
+            response = await notify(device_id=[device_id], message=f"Snapshot ({name})", image_entity=entity, timeout=0)
+        except CommandError as err:
+            check(False, f"notify with a {name} snapshot", str(err))
+            continue
+        ev = await sim.wait_for(lambda e: e.get("kind") == "notify", 5, since=mark)
+        check(ev["image_url"] == f"/api/esp32_screen/notification/{ev['id']}.jpg" and ev["timeout"] == 0 and ev["title"] == "",
+              f"notify with a {name}: image_url, timeout 0", str(ev))
+        status, body, headers = await sim.download(ev["image_url"])
+        sof, width, height = jpeg_info(body) if status == 200 else ("?", 0, 0)
+        ok_size = width <= 480 and height <= 300 and (expect_size is None or (width, height) == expect_size)
+        check(status == 200 and headers.get("Content-Type") == "image/jpeg" and sof == "SOF0" and ok_size,
+              f"{name} image: baseline JPEG that fits 480x300", f"HTTP {status} {headers.get('Content-Type')} {sof} {width}x{height} {len(body)} bytes")
+        if name == "camera":
+            status, _, _ = await sim.download(ev["image_url"], token=None)
+            check(status == 401, "notification image without a token -> 401", f"HTTP {status}")
+    status, _, _ = await sim.download("/api/esp32_screen/notification/0123456789abcdef.jpg")
+    check(status == 404, "unknown notification image -> 404", f"HTTP {status}")
+
+    mark = sim.mark()
+    await admin.call("call_service", domain="esp32_screen", service="dismiss", service_data={"device_id": device_id, "id": "abc"})
+    await admin.call("call_service", domain="esp32_screen", service="dismiss", service_data={"device_id": device_id})
+    await asyncio.sleep(0.3)
+    dismissed = [e for e in sim.events[mark:] if e.get("kind") == "dismiss"]
+    check(dismissed == [{"kind": "dismiss", "id": "abc"}, {"kind": "dismiss", "id": ""}], "dismiss with and without id", str(dismissed))
+
+    await expect_error(notify(device_id=device_id, message="x", image_entity="light.bed_light"),
+                       "invalid_format", "notify: image_entity must be camera.* or image.*")
+    other = next(d["id"] for d in devices if not any(i[0] == "esp32_screen" for i in d["identifiers"]))
+    await expect_error(notify(device_id=other, message="x"), "service_validation_error", "notify: a device that is not a screen")
+
+    await admin.call("esp32_screen/layout/save", screen_id=TEMP_ID, layout={"version": 1, "pages": []})
+    temp_device = next(d["id"] for d in await admin.call("config/device_registry/list") if ["esp32_screen", TEMP_ID] in d["identifiers"])
+    await expect_error(notify(device_id=temp_device, message="x"), "home_assistant_error", "notify: offline target -> error", "online")
+    await admin.call("esp32_screen/screen/remove", screen_id=TEMP_ID)
+
+    screens = (await admin.call("esp32_screen/screens"))["screens"]
+    others_online = [s_["screen_id"] for s_ in screens if s_["online"] and s_["screen_id"] != SIM_ID]
+    if others_online:
+        print(f"SKIP  notify without device_id (would show on other online screens: {len(others_online)})")
+    else:
+        mark = sim.mark()
+        await notify(message="To everyone")
+        try:
+            await sim.wait_for(lambda e: e.get("kind") == "notify" and e["message"] == "To everyone", 5, since=mark)
+            check(True, "notify without device_id reaches all online screens")
+        except TimeoutError:
+            check(False, "notify without device_id reaches all online screens")
+
+
 async def firmware_tests(
     admin: HAWebSocket, sim: ScreenSim, firmware_dir: Path, session: aiohttp.ClientSession, url: str
 ) -> None:
@@ -895,6 +985,9 @@ async def main() -> int:
 
         # ---- clock info and per-screen settings (section 7) -----------------------------------
         await settings_tests(admin, sim)
+
+        # ---- notifications (section 8) -----------------------------------------------------------
+        await notification_tests(admin, sim, url)
 
         # ---- firmware updates (section 5) -------------------------------------------------------
         await firmware_tests(admin, sim, firmware_dir, session, url)

@@ -477,3 +477,57 @@ After `layout` and `states`, the subscription sends `settings`, then `info`:
 the table above, as well as `name`. Both are optional. A value outside the
 rules fails with `invalid_format`. The `screens` result includes each screen's
 `settings`.
+
+## 8. Notifications
+
+HA actions (services):
+
+- `esp32_screen.notify` with these fields:
+  - `device_id`: one screen device or a list. Omit it to send to every online
+    screen.
+  - `title`: optional, up to 100 characters.
+  - `message`: required, up to 500 characters.
+  - `image_entity`: optional, a `camera.*` or `image.*` entity.
+  - `timeout`: seconds, default 30. `0` keeps the notification until it is
+    dismissed.
+
+  It returns `{"id": "<id>", "screens": [<screen_id>...]}` when called with a
+  response. Offline screens are skipped. If `device_id` is given and none of
+  those screens is online, the action fails.
+- `esp32_screen.dismiss` with optional `device_id` (same rules) and optional
+  `id`.
+
+### `notify` event
+
+```json
+{"kind":"notify","id":"5d38ba4f550bf018","title":"Front door",
+ "message":"Someone is at the door",
+ "image_url":"/api/esp32_screen/notification/5d38ba4f550bf018.jpg","timeout":30}
+```
+
+- **Fields.** All are always present. `id` is 16 lower-case hex digits, and the
+  same for every screen of one call. `title` may be `""`. `image_url` is `""`
+  without an image. `timeout` is seconds, and `0` means "until dismissed".
+- **Several notifications.** A newer notification replaces the one on screen.
+
+### Notification image
+
+With `image_entity`, HA takes the entity's current picture (camera snapshot or
+image entity) and converts it to a **baseline (non-progressive) JPEG** that
+fits in 480×300. It keeps the aspect ratio, only scales down, uses quality 80,
+and puts transparency on black. HA keeps it in memory for 10 minutes and serves
+it at:
+
+`GET <HA base URL>/api/esp32_screen/notification/<id>.jpg` with
+`Authorization: Bearer <access token>`. The response is `image/jpeg`. Without a
+valid token it is `401`; for an unknown or expired id, `404`.
+
+### `dismiss` event
+
+```json
+{"kind":"dismiss","id":"5d38ba4f550bf018"}
+{"kind":"dismiss","id":""}
+```
+
+The screen closes the notification with that `id`, ignoring others. An empty
+`id` closes whatever notification is showing.

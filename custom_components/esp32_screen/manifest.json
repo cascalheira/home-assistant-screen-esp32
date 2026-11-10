@@ -1,6 +1,10 @@
 {
   "domain": "esp32_screen",
   "name": "ESP32 Screen",
+  "after_dependencies": [
+    "camera",
+    "image"
+  ],
   "codeowners": [
     "@cascalheira"
   ],

@@ -1,0 +1,44 @@
+notify:
+  fields:
+    device_id:
+      selector:
+        device:
+          multiple: true
+          filter:
+            integration: esp32_screen
+    title:
+      example: Front door
+      selector:
+        text:
+    message:
+      required: true
+      example: Someone is at the door
+      selector:
+        text:
+          multiline: true
+    image_entity:
+      selector:
+        entity:
+          domain:
+            - camera
+            - image
+    timeout:
+      default: 30
+      selector:
+        number:
+          min: 0
+          max: 3600
+          unit_of_measurement: s
+          mode: box
+
+dismiss:
+  fields:
+    device_id:
+      selector:
+        device:
+          multiple: true
+          filter:
+            integration: esp32_screen
+    id:
+      selector:
+        text:

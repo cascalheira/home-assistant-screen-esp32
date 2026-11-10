@@ -49,5 +49,47 @@
         "name": "Firmware"
       }
     }
+  },
+  "services": {
+    "notify": {
+      "name": "Notify",
+      "description": "Shows a notification on ESP32 screens, optionally with a camera or image snapshot.",
+      "fields": {
+        "device_id": {
+          "name": "Screens",
+          "description": "Screens to notify. Leave empty for all screens."
+        },
+        "title": {
+          "name": "Title",
+          "description": "Short title."
+        },
+        "message": {
+          "name": "Message",
+          "description": "Text of the notification."
+        },
+        "image_entity": {
+          "name": "Image",
+          "description": "Camera or image entity whose current picture is shown."
+        },
+        "timeout": {
+          "name": "Timeout",
+          "description": "Seconds until the notification closes; 0 keeps it until dismissed."
+        }
+      }
+    },
+    "dismiss": {
+      "name": "Dismiss",
+      "description": "Closes a notification on ESP32 screens.",
+      "fields": {
+        "device_id": {
+          "name": "Screens",
+          "description": "Screens to dismiss on. Leave empty for all screens."
+        },
+        "id": {
+          "name": "Notification ID",
+          "description": "ID returned by the notify action. Leave empty to close any notification."
+        }
+      }
+    }
   }
 }

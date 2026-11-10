@@ -27,6 +27,7 @@ from .const import (
     STATIC_URL,
 )
 from .firmware import FirmwareDownloadView
+from .notifications import NotificationImageView, async_register_services
 from .manager import ScreenManager
 from .websocket import async_register_commands
 
@@ -47,6 +48,7 @@ PLATFORMS = [
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Register websocket commands once; they answer `not_loaded` without an entry."""
     async_register_commands(hass)
+    async_register_services(hass)
     return True
 
 
@@ -67,6 +69,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         # Views cannot be unregistered either; it finds the manager in hass.data.
         hass.http.register_view(FirmwareDownloadView())
+        hass.http.register_view(NotificationImageView())
         hass.data[_STATIC_REGISTERED] = True
 
     await manager.firmware.async_scan()

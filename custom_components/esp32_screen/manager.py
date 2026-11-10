@@ -52,6 +52,7 @@ from .const import (
     STORAGE_VERSION,
 )
 from .firmware import FirmwareImage, FirmwareStore
+from .notifications import NotificationImages
 from .layout import empty_layout, iter_tiles, upgrade_layout
 from .view_model import info_payload, resolve_label, tile_view_model
 
@@ -305,6 +306,7 @@ class ScreenManager:
         self.ota_jobs: dict[str, OtaJob] = {}
         # Last esp32_screen/state report per online screen (memory only).
         self.device_states: dict[str, dict[str, Any]] = {}
+        self.notification_images = NotificationImages()
         # Called with a screen_id when its install progress or record changes.
         self._screen_listeners: set[Callable[[str], None]] = set()
 
