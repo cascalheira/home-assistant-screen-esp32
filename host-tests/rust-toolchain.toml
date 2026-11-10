@@ -1,0 +1,3 @@
+# The host tests build with standard Rust, not the Xtensa toolchain.
+[toolchain]
+channel = "stable"

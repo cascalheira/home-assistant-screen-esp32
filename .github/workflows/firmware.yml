@@ -1,0 +1,98 @@
+# Screen side: host tests of the firmware's hardware-independent code, and a
+# release build of the firmware image (uploaded as an artifact).
+name: Firmware
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "ui/**"
+      - "host-tests/**"
+      - "build.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
+      - "sdkconfig.defaults"
+      - "partitions.csv"
+      - "scripts/cargo-esp.sh"
+      - "scripts/build-firmware.sh"
+      - "scripts/test-host.sh"
+      - "custom_components/esp32_screen/const.py"
+      - ".github/workflows/firmware.yml"
+  pull_request:
+    paths:
+      - "src/**"
+      - "ui/**"
+      - "host-tests/**"
+      - "build.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
+      - "sdkconfig.defaults"
+      - "partitions.csv"
+      - "scripts/cargo-esp.sh"
+      - "scripts/build-firmware.sh"
+      - "scripts/test-host.sh"
+      - "custom_components/esp32_screen/const.py"
+      - ".github/workflows/firmware.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firmware-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host-tests:
+    name: Host tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # host-tests/rust-toolchain.toml selects stable; rustup installs it.
+      - name: Run tests
+        run: scripts/test-host.sh
+
+  build:
+    name: Build firmware
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Xtensa Rust toolchain
+        uses: esp-rs/xtensa-toolchain@v1.7.0
+        with:
+          buildtargets: esp32s3
+          ldproxy: true
+
+      - name: Install espflash
+        uses: taiki-e/install-action@v2
+        with:
+          tool: espflash
+
+      # ESP-IDF's checkout and tools live in ~/.espressif. The build output
+      # (several GB) is not cached.
+      - name: Cache ESP-IDF and crates
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.espressif
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: firmware-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'sdkconfig.defaults', 'rust-toolchain.toml') }}
+          restore-keys: firmware-${{ runner.os }}-
+
+      - name: Build the release image
+        run: scripts/build-firmware.sh
+
+      - name: Upload the image
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: dist/*.bin
+          if-no-files-found: error

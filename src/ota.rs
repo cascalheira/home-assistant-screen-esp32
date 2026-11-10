@@ -13,6 +13,8 @@ use anyhow::{bail, Context, Result};
 use esp_idf_svc::ota::EspOta;
 use sha2::{Digest, Sha256};
 
+pub use crate::logic::image::descriptor;
+
 /// How long new firmware must run before it is kept.
 pub const HEALTHY_AFTER: Duration = Duration::from_secs(60);
 
@@ -34,23 +36,6 @@ pub enum Status {
     Verifying,
     Restarting,
     Failed(String),
-}
-
-/// (project_name, version) from an app image's first bytes (>= 112).
-pub fn descriptor(header: &[u8]) -> Option<(String, String)> {
-    if header.len() < 112 {
-        return None;
-    }
-    let magic = u32::from_le_bytes(header[32..36].try_into().ok()?);
-    if magic != 0xABCD_5432 {
-        return None;
-    }
-    let text = |range: core::ops::Range<usize>| {
-        let raw = &header[range];
-        let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
-        String::from_utf8_lossy(&raw[..end]).into_owned()
-    };
-    Some((text(80..112), text(48..80)))
 }
 
 /// Streams an app image into the spare slot and makes it the boot slot.

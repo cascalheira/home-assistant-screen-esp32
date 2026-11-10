@@ -12,6 +12,7 @@ mod console;
 mod display;
 mod ha;
 mod icons;
+mod logic;
 mod ota;
 mod saver;
 mod sd;

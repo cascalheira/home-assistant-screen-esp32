@@ -18,16 +18,29 @@ Assistant.
    it. Tap a toggle to enable or disable an automation, or to switch an
    input_boolean or switch. Long-press a dimmable light for a brightness
    slider. Tap an AC tile for target temperature and mode. AC tiles can take
-   their temperature and humidity from separate sensors, chosen in the editor. Layout changes saved in the editor appear
-   immediately. Each page has a tab with an optional icon, chosen from 46
-   room and function icons in the editor. When the titles don't fit, the other
-   pages show only their icons. The top bar shows the Wi-Fi signal next to the gear icon, which
-   opens settings: change or forget Wi-Fi, sign out of Home Assistant, and the
-   screensaver.
+   their temperature and humidity from separate sensors, chosen in the editor.
+   Scene tiles run a scene, script or button. Sensor tiles show a value. Blind,
+   lock, alarm and media tiles open a panel with their controls, including a
+   keypad when a lock or alarm needs a code. Layout changes saved in the
+   editor appear immediately. Each page has a tab with an optional icon,
+   chosen from 46 room and function icons in the editor. When the titles
+   don't fit, the other pages show only their icons. The top bar shows the
+   Wi-Fi signal next to the gear icon, which opens settings: change or forget
+   Wi-Fi, sign out of Home Assistant, and the screensaver.
 4. **Screensaver (optional).** A plain clock or a flip clock with the date,
    after 1, 5 or 15 minutes without touches on the dashboard, with the
-   backlight dimmed. The touch that wakes the screen doesn't press anything.
-   Time comes from NTP and the timezone from Home Assistant.
+   backlight dimmed. It can show the weather and an indoor temperature, in
+   English or Portuguese, with a 12- or 24-hour clock. The touch that wakes
+   the screen doesn't press anything. Time comes from NTP and the timezone
+   from Home Assistant. Backlight and screensaver can also be controlled from
+   Home Assistant.
+5. **Notifications.** Home Assistant can show a message on the screen, with
+   a camera snapshot or another picture. The screen wakes up for it. A tap
+   closes it, and so do its timeout and Home Assistant.
+
+With an SD card in, the screen keeps the last layout and tile states on it.
+After a restart the dashboard appears right away, before Home Assistant
+answers, and stays visible while Home Assistant is offline.
 
 Wi-Fi credentials are saved only after a connection with them succeeds. If new
 credentials fail, the screen goes back to the saved network. To start over,
@@ -41,9 +54,11 @@ use **Forget** in settings or hold the **BOOT** button for 5 seconds.
 | `src/display.rs` | RGB panel through ESP-IDF `esp_lcd`, backlight PWM |
 | `src/touch.rs` | GT911 driver |
 | `src/wifi.rs` | Wi-Fi worker thread: scan, connect, retry, NVS credentials |
-| `src/ha/` | Home Assistant worker: login (`auth.rs`), websocket (`ws.rs`), mDNS discovery, protocol |
+| `src/ha/` | Home Assistant worker: login (`auth.rs`), websocket (`ws.rs`), SD cache (`cache.rs`), mDNS discovery, protocol |
 | `src/app.rs` | Wizard and dashboard state, UI callbacks, worker events to pages |
-| `src/console.rs` | Serial debug console (taps, typing, screenshots) |
+| `src/console.rs` | Serial debug console (taps, typing, screenshots), development builds only |
+| `src/ota.rs` | Firmware updates: install, rollback check, `update.bin` from the SD card |
+| `src/logic/` | Code without hardware dependencies (clock text, touch filter, URLs), tested on a computer |
 | `src/sd.rs` | microSD card on SPI, mounted as FAT at `/sdcard` |
 | `src/icons.rs` | The page icons the firmware can draw (must match the editor's list) |
 | `src/saver.rs` | Screensaver: idle timer, clock digits, flip animation, settings |
@@ -51,6 +66,7 @@ use **Forget** in settings or hold the **BOOT** button for 5 seconds.
 | `ui/*.slint` | All screens ([Slint](https://slint.dev), software renderer) |
 | `docs/protocol.md` | Contract between the firmware and the integration |
 | `custom_components/esp32_screen/` | The Home Assistant integration and its editor panel |
+| `host-tests/` | Tests for `src/logic/`, the tile model and UI consistency, run on a computer |
 | `homeassistant/` | Dev Home Assistant (Docker), simulator and tests for the integration |
 | `scripts/` | Build wrapper, serial bridge, flash backup |
 
@@ -63,7 +79,11 @@ ESP-IDF v5.5.3 is fetched into `~/.espressif` on the first build.
 scripts/flash.sh                       # build and flash over USB
 scripts/build-firmware.sh              # build dist/esp32-screen-<version>.bin
 scripts/build-firmware.sh --publish homeassistant/dev-config/esp32_screen/firmware
+scripts/test-host.sh                   # host tests, with standard Rust
 ```
+
+`scripts/flash.sh` builds with the debug console. Images from
+`scripts/build-firmware.sh` leave it out unless given `--dev`.
 
 Always build through `scripts/cargo-esp.sh`, which the other scripts use. It
 selects the `esp` toolchain, because Homebrew's `rustc` shadows rustup's on
@@ -104,10 +124,12 @@ uvx esptool --port /dev/cu.usbserial-XXXX --baud 230400 write-flash 0 backup/fac
 
 ## Debug console
 
-The firmware reads commands on the serial port: `tap X Y [MS]`, `type TEXT`,
-`key enter`, `key back`, `shot`, `status`, `sd`, `saver`, `flipshot MS`,
-`page NAME`, `forget`, `reboot`. `flipshot` flips the clock's last digit and
-takes a screenshot MS milliseconds later.
+Development builds (the default `dev-console` feature) read commands on the
+serial port: `tap X Y [MS]`, `type TEXT`, `key enter`, `key back`, `shot`,
+`status`, `sd`, `sdformat ERASE`, `sdcopyslot`, `saver`, `bench`,
+`flipshot MS`, `page NAME`, `forget`, `reboot`. `src/console.rs` describes
+each one. Release images leave the console out, so anyone with a USB cable
+can't drive the screen.
 
 On macOS, opening the CH340 port resets the board. So `scripts/devctl.py serve`
 opens it once and keeps it open, and the other subcommands go through it:
@@ -203,6 +225,8 @@ instance go in `homeassistant/dev-config/esp32_screen/firmware/`.
 CI (`.github/workflows/integration.yml`) runs ruff, hassfest, the HACS check and
 `e2e.py` against a fresh Home Assistant in Docker. Run `uvx ruff check
 custom_components homeassistant` locally before pushing.
+`.github/workflows/firmware.yml` runs the host tests and builds the release
+image, which it keeps as a build artifact.
 
 ## Notes
 
@@ -218,8 +242,17 @@ custom_components homeassistant` locally before pushing.
 - **Rendering.** Double buffered: Slint draws line by line into internal RAM,
   lines are copied into the back buffer in PSRAM, and the driver switches
   buffers at the end of a frame, so no half-drawn frame reaches the panel.
-  Rendering costs roughly 1 µs per changed pixel: about 20 ms for a tile,
-  30 ms per flip-clock frame, 130 ms for a full screen.
+  The UI runs on one core and the panel's interrupts on the other. A full
+  redraw takes about 95 ms for the dashboard and 80 ms for settings.
+- **Memory.** The firmware runs from PSRAM (running from flash hung the
+  board), which leaves about 550 KB of PSRAM free next to the two frame
+  buffers. A notification picture needs up to about 430 KB, and is left out
+  when that would leave less than 96 KB. Making the firmware smaller frees
+  PSRAM too.
+- **Notification pictures** are decoded by the JPEG decoder in the chip's
+  ROM (Espressif's `esp_jpeg` component). Pure-Rust decoders did not fit:
+  one starts a thread for every picture, another needs about 29 KB of stack
+  and hung on this chip.
 - **Clock digits are images.** A 200 px font would be pre-rendered for every
   character. Single-colour PNGs are stored as alpha maps, about 20 KB each.
 - **Compiler workaround.** Deserializing `f32` with serde crashes the Xtensa
@@ -230,10 +263,13 @@ custom_components homeassistant` locally before pushing.
   the handshake, and ESP-IDF's transport only releases it after its read
   timeout. The screen therefore sends its auth message as soon as it connects.
 - **Security.** The Wi-Fi password is stored in NVS without flash encryption.
-- **SD card.** The card is mounted at boot; nothing writes to it yet. Settings
-  shows its free space. FAT with long file names is supported. exFAT cards
-  must be reformatted: the console command `sdformat ERASE` replaces all
-  partitions with one FAT32 partition over the whole card, then restarts.
+- **SD card.** The card is mounted at boot. It holds `update.bin` for updates
+  and `esp32-screen/cache.json`, the last layout and states. The cache has
+  the Home Assistant address and the names of the entities on the dashboard,
+  but no credentials, and is deleted on sign-out. Settings shows the free
+  space. FAT with long file names is supported. exFAT cards must be
+  reformatted: the console command `sdformat ERASE` replaces all partitions
+  with one FAT32 partition over the whole card, then restarts.
 - **No booting from SD.** The ESP32-S3's ROM bootloader can only load from SPI
   flash, or receive code over UART/USB in download mode. Firmware updates from
   the card or over Wi-Fi go through the normal two OTA slots instead.

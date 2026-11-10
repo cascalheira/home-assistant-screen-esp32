@@ -24,6 +24,8 @@ use esp_idf_svc::wifi::{
     AuthMethod, ClientConfiguration, Configuration, EspWifi, PmfConfiguration, WifiEvent,
 };
 
+pub use crate::logic::net::wifi_bars as bars;
+
 const NVS_NAMESPACE: &str = "wifi";
 const NVS_SSID: &str = "ssid";
 const NVS_PASSWORD: &str = "pass";
@@ -669,15 +671,5 @@ impl Worker {
     fn disconnect(&mut self) {
         self.ignore_disconnects_until = Instant::now() + Duration::from_millis(500);
         let _ = self.wifi.disconnect();
-    }
-}
-
-/// Maps RSSI to 1-4 signal bars.
-pub fn bars(rssi: i8) -> i32 {
-    match rssi {
-        r if r >= -55 => 4,
-        r if r >= -67 => 3,
-        r if r >= -78 => 2,
-        _ => 1,
     }
 }

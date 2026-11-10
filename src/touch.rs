@@ -18,17 +18,8 @@ const REG_PRODUCT_ID: u16 = 0x8140; // 4 ASCII bytes, e.g. "911\0"
 const REG_STATUS: u16 = 0x814E; // bit 7: sample ready, bits 0-3: touch count
 const REG_POINT_1: u16 = 0x8150; // x_lo, x_hi, y_lo, y_hi, size_lo, size_hi
 
-/// What the controller reported since the last poll.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Sample {
-    /// No new sample yet; keep the previous state.
-    None,
-    Pressed {
-        x: i16,
-        y: i16,
-    },
-    Released,
-}
+pub use crate::logic::touch::Sample;
+use crate::logic::touch::TouchFilter;
 
 pub struct Touch {
     i2c: I2cDriver<'static>,
@@ -36,10 +27,7 @@ pub struct Touch {
     max_x: u32,
     max_y: u32,
     _reset: PinDriver<'static, Output>,
-    /// First sample of a press that isn't confirmed yet.
-    candidate: Option<(i16, i16)>,
-    /// A press has been reported and not released yet.
-    down: bool,
+    filter: TouchFilter,
 }
 
 impl Touch {
@@ -69,8 +57,7 @@ impl Touch {
             max_x: LCD_H_RES as u32,
             max_y: LCD_V_RES as u32,
             _reset: reset,
-            candidate: None,
-            down: false,
+            filter: TouchFilter::default(),
         };
 
         let mut id = [0u8; 4];
@@ -113,42 +100,11 @@ impl Touch {
         self.addr != 0
     }
 
-    /// Polls the controller and filters out phantom touches.
-    ///
-    /// A press is reported only after two consecutive samples close to each
-    /// other (about 10 ms apart); a real finger always gives several, while
-    /// electrical noise typically shows up as a single sample. A release is
-    /// reported only for presses that were reported.
+    /// Polls the controller and filters out phantom touches (see
+    /// [`TouchFilter`]).
     pub fn poll(&mut self) -> Sample {
-        match self.poll_raw() {
-            Sample::None => Sample::None,
-            Sample::Pressed { x, y } => {
-                if self.down {
-                    return Sample::Pressed { x, y };
-                }
-                match self.candidate {
-                    Some((cx, cy)) if (cx - x).abs() <= 40 && (cy - y).abs() <= 40 => {
-                        self.candidate = None;
-                        self.down = true;
-                        Sample::Pressed { x, y }
-                    }
-                    _ => {
-                        self.candidate = Some((x, y));
-                        Sample::None
-                    }
-                }
-            }
-            Sample::Released => {
-                if self.candidate.take().is_some() && !self.down {
-                    log::info!("ignored a one-sample touch (likely noise)");
-                }
-                if std::mem::take(&mut self.down) {
-                    Sample::Released
-                } else {
-                    Sample::None
-                }
-            }
-        }
+        let raw = self.poll_raw();
+        self.filter.feed(raw)
     }
 
     /// Reads the controller. The GT911 publishes a new sample about every

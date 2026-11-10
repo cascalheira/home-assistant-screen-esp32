@@ -16,6 +16,7 @@ use esp_idf_svc::sys;
 use slint::ComponentHandle;
 
 use crate::display::Backlight;
+use crate::logic::clock;
 use crate::{AppWindow, Page};
 
 const NVS_NAMESPACE: &str = "display";
@@ -399,29 +400,20 @@ impl Saver {
     }
 
     fn digits_of(&self, tm: &sys::tm) -> [i32; 4] {
-        let hour = if self.h24 {
-            tm.tm_hour
-        } else {
-            match tm.tm_hour % 12 {
-                0 => 12,
-                h => h,
-            }
-        };
-        let first = if !self.h24 && hour < 10 {
-            -1
-        } else {
-            hour / 10
-        };
-        [first, hour % 10, tm.tm_min / 10, tm.tm_min % 10]
+        clock::digits(tm.tm_hour, tm.tm_min, self.h24)
     }
 
     fn date_text(&self, tm: &sys::tm) -> String {
-        let date = date_text(tm, self.portuguese);
-        if self.h24 {
-            date
-        } else {
-            format!("{date} · {}", if tm.tm_hour < 12 { "AM" } else { "PM" })
-        }
+        clock::date_line(
+            clock::Date {
+                weekday: tm.tm_wday,
+                day: tm.tm_mday,
+                month: tm.tm_mon,
+                hour: tm.tm_hour,
+            },
+            self.portuguese,
+            self.h24,
+        )
     }
 
     /// Changes one digit and starts its flip.
@@ -509,67 +501,4 @@ pub fn set_timezone(posix_tz: &str) {
         sys::tzset();
     }
     log::info!("timezone set to {posix_tz}");
-}
-
-const DAYS_EN: [&str; 7] = [
-    "Sunday",
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-];
-const MONTHS_EN: [&str; 12] = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-];
-const DAYS_PT: [&str; 7] = [
-    "Domingo",
-    "Segunda-feira",
-    "Terça-feira",
-    "Quarta-feira",
-    "Quinta-feira",
-    "Sexta-feira",
-    "Sábado",
-];
-const MONTHS_PT: [&str; 12] = [
-    "janeiro",
-    "fevereiro",
-    "março",
-    "abril",
-    "maio",
-    "junho",
-    "julho",
-    "agosto",
-    "setembro",
-    "outubro",
-    "novembro",
-    "dezembro",
-];
-
-/// "Tuesday, 10 November" / "Terça-feira, 10 de novembro".
-fn date_text(tm: &sys::tm, portuguese: bool) -> String {
-    let (days, months) = if portuguese {
-        (DAYS_PT, MONTHS_PT)
-    } else {
-        (DAYS_EN, MONTHS_EN)
-    };
-    let day = days.get(tm.tm_wday as usize).copied().unwrap_or("");
-    let month = months.get(tm.tm_mon as usize).copied().unwrap_or("");
-    if portuguese {
-        format!("{day}, {} de {month}", tm.tm_mday)
-    } else {
-        format!("{day}, {} {month}", tm.tm_mday)
-    }
 }

@@ -9,6 +9,9 @@ use esp_idf_svc::http::Method;
 use esp_idf_svc::sys;
 use serde_json::{json, Value};
 
+use crate::logic::net::url_encode;
+pub use crate::logic::net::{normalize_url, websocket_url};
+
 pub struct Tokens {
     pub access: String,
     pub refresh: String,
@@ -244,38 +247,4 @@ fn post(url: &str, content_type: &str, body: &[u8]) -> Result<(u16, Value)> {
     }
     let value = serde_json::from_slice(&out).unwrap_or(Value::Null);
     Ok((status, value))
-}
-
-fn url_encode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char)
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
-}
-
-/// Normalizes what the user typed into a base URL: adds `http://` when no
-/// scheme is given and drops trailing slashes.
-pub fn normalize_url(input: &str) -> String {
-    let s = input.trim().trim_end_matches('/');
-    if s.starts_with("http://") || s.starts_with("https://") {
-        s.to_string()
-    } else {
-        format!("http://{s}")
-    }
-}
-
-/// `http://host:8123` → `ws://host:8123/api/websocket`.
-pub fn websocket_url(base: &str) -> String {
-    let rest = base
-        .strip_prefix("https://")
-        .map(|r| format!("wss://{r}"))
-        .or_else(|| base.strip_prefix("http://").map(|r| format!("ws://{r}")))
-        .unwrap_or_else(|| format!("ws://{base}"));
-    format!("{rest}/api/websocket")
 }
