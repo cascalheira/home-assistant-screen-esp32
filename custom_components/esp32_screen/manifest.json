@@ -1,0 +1,21 @@
+{
+  "domain": "esp32_screen",
+  "name": "ESP32 Screen",
+  "codeowners": [
+    "@cascalheira"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "frontend",
+    "http",
+    "panel_custom",
+    "websocket_api"
+  ],
+  "documentation": "https://github.com/cascalheira/home-assistant-screen-esp32",
+  "integration_type": "hub",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/cascalheira/home-assistant-screen-esp32/issues",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.1.0"
+}

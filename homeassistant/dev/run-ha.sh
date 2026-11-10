@@ -3,12 +3,13 @@
 #
 #   homeassistant/dev/run-ha.sh
 #
-# Config lives in homeassistant/dev-config/ (git-ignored). The integration is
-# bind-mounted read-only, so after editing it `docker restart esp32-screen-ha`.
+# Config lives in homeassistant/dev-config/ (git-ignored). The integration
+# (custom_components/esp32_screen at the repo root) is bind-mounted read-only, so after editing it `docker restart esp32-screen-ha`.
 # Port 8123 is published on all interfaces so a screen on the LAN can reach it.
 set -euo pipefail
 
 HA_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+REPO="$(cd "$HA_DIR/.." && pwd)"
 CONFIG="$HA_DIR/dev-config"
 NAME=esp32-screen-ha
 IMAGE=ghcr.io/home-assistant/home-assistant:stable
@@ -22,7 +23,7 @@ docker run -d \
   --restart unless-stopped \
   -p 8123:8123 \
   -v "$CONFIG:/config" \
-  -v "$HA_DIR/custom_components/esp32_screen:/config/custom_components/esp32_screen:ro" \
+  -v "$REPO/custom_components/esp32_screen:/config/custom_components/esp32_screen:ro" \
   "$IMAGE"
 
 echo "Waiting for Home Assistant on http://localhost:8123 ..."

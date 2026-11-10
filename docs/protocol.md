@@ -3,7 +3,7 @@
 Two parts talk to each other:
 
 - **Firmware** (`src/`) on each screen.
-- **`esp32_screen` integration** (`homeassistant/custom_components/esp32_screen/`)
+- **`esp32_screen` integration** (`custom_components/esp32_screen/`)
   in Home Assistant. It stores the layouts, serves the visual editor panel and
   turns entity states into small "tile view models" for the screens.
 

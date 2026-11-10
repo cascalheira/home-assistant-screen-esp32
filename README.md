@@ -50,7 +50,8 @@ use **Forget** in settings or hold the **BOOT** button for 5 seconds.
 | `ui/clock/*.png` | Clock digits, rendered by `scripts/gen_clock_digits.py` |
 | `ui/*.slint` | All screens ([Slint](https://slint.dev), software renderer) |
 | `docs/protocol.md` | Contract between the firmware and the integration |
-| `homeassistant/` | The `esp32_screen` integration and its editor panel |
+| `custom_components/esp32_screen/` | The Home Assistant integration and its editor panel |
+| `homeassistant/` | Dev Home Assistant (Docker), simulator and tests for the integration |
 | `scripts/` | Build wrapper, serial bridge, flash backup |
 
 ## Build and flash
@@ -122,16 +123,16 @@ Stop the server before flashing.
 
 ## Home Assistant integration
 
-`homeassistant/custom_components/esp32_screen/` is the Home Assistant side: it
+`custom_components/esp32_screen/` is the Home Assistant side: it
 stores each screen's layout, adds a **Screens** panel with a visual grid editor,
 and streams tile states to the screens. The contract with the firmware is
 [`docs/protocol.md`](docs/protocol.md). Tested on Home Assistant 2026.11.1.
 
-1. **Install.** Copy `homeassistant/custom_components/esp32_screen` into your
-   Home Assistant config directory as `custom_components/esp32_screen`, then
-   restart Home Assistant. HACS expects `custom_components/` at the root of a
-   repository, so install from this repo by copying, or publish the folder in
-   its own repository for HACS.
+1. **Install.** With [HACS](https://hacs.xyz): HACS → ⋮ → Custom repositories →
+   add `https://github.com/cascalheira/home-assistant-screen-esp32`, type
+   *Integration*, then download *ESP32 Screen* and restart Home Assistant.
+   Without HACS: copy `custom_components/esp32_screen` into your Home Assistant
+   config directory as `custom_components/esp32_screen` and restart.
 2. **Add the integration.** Settings → Devices & services → Add integration →
    *ESP32 Screen*. There is nothing to configure, and only one instance.
 3. **Create a user for each screen.** Settings → People → Users → Add user, with
