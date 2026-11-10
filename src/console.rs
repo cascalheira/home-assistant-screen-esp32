@@ -1,3 +1,4 @@
+#![cfg_attr(not(feature = "dev-console"), allow(dead_code))]
 //! Line-based debug console on UART0 (the CH340 USB port).
 //!
 //! Commands (one per line):

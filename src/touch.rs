@@ -36,6 +36,10 @@ pub struct Touch {
     max_x: u32,
     max_y: u32,
     _reset: PinDriver<'static, Output>,
+    /// First sample of a press that isn't confirmed yet.
+    candidate: Option<(i16, i16)>,
+    /// A press has been reported and not released yet.
+    down: bool,
 }
 
 impl Touch {
@@ -65,6 +69,8 @@ impl Touch {
             max_x: LCD_H_RES as u32,
             max_y: LCD_V_RES as u32,
             _reset: reset,
+            candidate: None,
+            down: false,
         };
 
         let mut id = [0u8; 4];
@@ -107,9 +113,47 @@ impl Touch {
         self.addr != 0
     }
 
-    /// Polls the controller. The GT911 publishes a new sample about every
-    /// 10 ms; in between it reports `Sample::None`.
+    /// Polls the controller and filters out phantom touches.
+    ///
+    /// A press is reported only after two consecutive samples close to each
+    /// other (about 10 ms apart); a real finger always gives several, while
+    /// electrical noise typically shows up as a single sample. A release is
+    /// reported only for presses that were reported.
     pub fn poll(&mut self) -> Sample {
+        match self.poll_raw() {
+            Sample::None => Sample::None,
+            Sample::Pressed { x, y } => {
+                if self.down {
+                    return Sample::Pressed { x, y };
+                }
+                match self.candidate {
+                    Some((cx, cy)) if (cx - x).abs() <= 40 && (cy - y).abs() <= 40 => {
+                        self.candidate = None;
+                        self.down = true;
+                        Sample::Pressed { x, y }
+                    }
+                    _ => {
+                        self.candidate = Some((x, y));
+                        Sample::None
+                    }
+                }
+            }
+            Sample::Released => {
+                if self.candidate.take().is_some() && !self.down {
+                    log::info!("ignored a one-sample touch (likely noise)");
+                }
+                if std::mem::take(&mut self.down) {
+                    Sample::Released
+                } else {
+                    Sample::None
+                }
+            }
+        }
+    }
+
+    /// Reads the controller. The GT911 publishes a new sample about every
+    /// 10 ms; in between it reports `Sample::None`.
+    fn poll_raw(&mut self) -> Sample {
         if self.addr == 0 {
             return Sample::None;
         }

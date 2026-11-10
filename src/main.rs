@@ -167,7 +167,10 @@ fn main() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("show window: {e:?}"))?;
 
     let (console_tx, console_rx) = mpsc::channel();
+    #[cfg(feature = "dev-console")]
     console::start(console_tx);
+    #[cfg(not(feature = "dev-console"))]
+    drop(console_tx);
 
     log::info!(
         "ready, touch {}",

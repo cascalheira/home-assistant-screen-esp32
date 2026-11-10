@@ -197,6 +197,7 @@ impl slint::platform::software_renderer::LineBufferProvider for LineWriter<'_> {
 }
 
 /// Address of the buffer currently on screen (for screenshots).
+#[cfg_attr(not(feature = "dev-console"), allow(dead_code))]
 pub fn front_buffer_addr() -> usize {
     FRONT_BUFFER.load(Ordering::Relaxed)
 }

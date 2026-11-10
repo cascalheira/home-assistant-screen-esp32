@@ -24,6 +24,12 @@ opt-level = 3
 debug = true
 opt-level = "z"
 
+[features]
+default = ["dev-console"]
+# Serial debug console (taps, typing, screenshots, SD formatting...). Release
+# images built by scripts/build-firmware.sh leave it out.
+dev-console = []
+
 [dependencies]
 anyhow = "1"
 log = "0.4"
