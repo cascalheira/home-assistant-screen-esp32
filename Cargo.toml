@@ -49,7 +49,7 @@ slint = { version = "1.18", default-features = false, features = [
 
 [build-dependencies]
 embuild = "0.33"
-slint-build = "1.18"
+slint-build = { version = "1.18", features = ["sdf-fonts"] }
 
 # ESP-IDF components from the Espressif component registry.
 [[package.metadata.esp-idf-sys.extra_components]]

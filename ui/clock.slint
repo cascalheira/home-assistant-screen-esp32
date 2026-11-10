@@ -1,9 +1,9 @@
 // Screensaver clock: a plain clock or a flip clock.
 //
 // Digits are images (ui/clock/*.png, made by scripts/gen_clock_digits.py),
-// not text: Slint pre-renders every character at every font size, and a
-// 200 px font would cost megabytes of flash. Single-colour images are stored
-// as alpha maps and can be scaled, which the flip animation relies on.
+// not text. They date from before the UI used SDF fonts, when a 200 px font
+// would have cost megabytes of flash. Single-colour images are stored as
+// alpha maps and can be scaled, which the flip animation relies on.
 
 import { Icons } from "dashboard.slint";
 

@@ -235,27 +235,28 @@ image, which it keeps as a build artifact.
   web, or commercial. Embedded devices are not covered by the royalty-free
   licence. Check this before shipping the firmware outside the GPL.
 - **Fonts.** Inter (SIL Open Font License) and Material Design Icons
-  (Pictogrammers Free License), see `ui/fonts/`. Slint pre-renders every
-  character at every font size used, which costs flash. The UI is limited to
-  eight font sizes. Text covers ASCII and Latin-1, which includes Portuguese
+  (Pictogrammers Free License), see `ui/fonts/`. Glyphs are embedded as
+  signed distance fields: one per character, scaled to any font size, so
+  sizes cost no flash. Bitmaps per size took about 1.7 MB more and redrew
+  only 5-10% faster. Text covers ASCII and Latin-1, which includes Portuguese
   accents. Other scripts in names or SSIDs show missing glyphs. To add
   characters, extend the `glyph-coverage` text in `ui/app.slint`.
 - **Rendering.** Double buffered: Slint draws line by line into internal RAM,
   lines are copied into the back buffer in PSRAM, and the driver switches
   buffers at the end of a frame, so no half-drawn frame reaches the panel.
   The UI runs on one core and the panel's interrupts on the other. A full
-  redraw takes about 95 ms for the dashboard and 80 ms for settings.
-- **Memory.** The firmware runs from PSRAM (running from flash hung the
-  board), which leaves about 550 KB of PSRAM free next to the two frame
-  buffers. A notification picture needs up to about 430 KB, and is left out
-  when that would leave less than 96 KB. Making the firmware smaller frees
-  PSRAM too.
+  redraw takes about 100 ms for the dashboard and 85 ms for settings.
+- **Memory.** The firmware (about 4.4 MB) runs from PSRAM, because running
+  from flash hung the board. That leaves about 2.2 MB of PSRAM free next to
+  the two frame buffers. A notification picture needs up to about 430 KB,
+  and is left out when that would leave less than 96 KB. Making the firmware
+  smaller frees PSRAM too.
 - **Notification pictures** are decoded by the JPEG decoder in the chip's
   ROM (Espressif's `esp_jpeg` component). Pure-Rust decoders did not fit:
   one starts a thread for every picture, another needs about 29 KB of stack
   and hung on this chip.
-- **Clock digits are images.** A 200 px font would be pre-rendered for every
-  character. Single-colour PNGs are stored as alpha maps, about 20 KB each.
+- **Clock digits are images.** Single-colour PNGs, stored as alpha maps of
+  about 17 KB each, scale smoothly for the flip animation.
 - **Compiler workaround.** Deserializing `f32` with serde crashes the Xtensa
   LLVM backend ("Cannot select ... PCREL_WRAPPER"), so tile temperatures are
   `f64`. The same bug hits Slint code like `opacity: c ? 1 : 0.4`, a choice
