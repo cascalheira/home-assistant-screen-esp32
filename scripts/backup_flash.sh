@@ -6,7 +6,7 @@
 # Restore: esptool --port <port> --baud 230400 write-flash 0 <output.bin>
 set -u
 
-PORT="${1:-${ESPFLASH_PORT:-$(ls /dev/cu.usbserial-* /dev/ttyUSB* 2>/dev/null | head -1)}}"
+PORT="${1:-${ESPFLASH_PORT:-$( (ls /dev/cu.usbserial-* /dev/ttyUSB* 2>/dev/null || true) | head -1)}}"
 OUT="${2:-backup/factory-firmware-16MB.bin}"
 CHUNK=$((0x100000))
 TOTAL=$((0x1000000))

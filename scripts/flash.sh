@@ -13,7 +13,7 @@ cd "$(dirname "$0")/.."
 
 scripts/cargo-esp.sh build --release
 # Port: $ESPFLASH_PORT, else the first USB-serial adapter found.
-PORT="${ESPFLASH_PORT:-$(ls /dev/cu.usbserial-* /dev/ttyUSB* 2>/dev/null | head -1)}"
+PORT="${ESPFLASH_PORT:-$( (ls /dev/cu.usbserial-* /dev/ttyUSB* 2>/dev/null || true) | head -1)}"
 OUT=target/xtensa-esp32s3-espidf/release
 espflash flash \
   ${PORT:+--port "$PORT"} \
