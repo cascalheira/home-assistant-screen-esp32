@@ -267,6 +267,23 @@ TEST_LAYOUT: dict[str, Any] = {
                      temperature_entity="sensor.attic_temperature_f"),
             ],
         },
+        {
+            "id": "p3", "title": "Kinds", "cols": 4, "rows": 3,
+            "tiles": [
+                tile("k1", "scene", "scene.evening", 0, 0),
+                tile("k2", "scene", "script.movie_time", 1, 0),
+                tile("k3", "scene", "button.push", 2, 0),
+                tile("k4", "scene", "input_button.doorbell_test", 3, 0),
+                tile("k5", "sensor", "sensor.outside_temperature", 0, 1),
+                tile("k6", "sensor", "sensor.power_consumption", 1, 1),
+                tile("k7", "sensor", "binary_sensor.basement_floor_wet", 2, 1),
+                tile("k8", "sensor", "binary_sensor.movement_backyard", 3, 1),
+                tile("k9", "blind", "cover.living_room_window", 0, 2),
+                tile("k10", "lock", "lock.front_door", 1, 2),
+                tile("k11", "alarm", "alarm_control_panel.security", 2, 2),
+                tile("k12", "media", "media_player.walkman", 3, 2),
+            ],
+        },
     ],
 }
 ALL_TILES = {t["id"] for p in TEST_LAYOUT["pages"] for t in p["tiles"]}
@@ -385,10 +402,20 @@ async def main() -> int:
             ("input_boolean", "turn_off", "input_boolean.guest_mode", {}),
             ("switch", "turn_off", "switch.gate_relay", {}),
             ("automation", "turn_on", "automation.night_lights", {}),
+            ("lock", "lock", "lock.front_door", {}),
+            ("alarm_control_panel", "alarm_disarm", "alarm_control_panel.security", {"code": "1234"}),
+            ("media_player", "media_play", "media_player.walkman", {}),
+            ("media_player", "volume_set", "media_player.walkman", {"volume_level": 1.0}),
+            ("cover", "set_cover_position", "cover.living_room_window", {"position": 70}),
         ):
             await admin.call("call_service", domain=domain, service=service, target={"entity_id": entity},
                              service_data=data)
         await asyncio.sleep(3)  # demo valves take a moment
+        for _ in range(30):  # demo covers move 10 % per second
+            window = next(st for st in await admin.call("get_states") if st["entity_id"] == "cover.living_room_window")
+            if window["state"] == "open" and window["attributes"].get("current_position") == 70:
+                break
+            await asyncio.sleep(1)
 
         # ---- the simulated screen ------------------------------------------------------
         sim = ScreenSim(url, *SCREEN, SIM_ID, name="Sim Screen", sw_version="9.9.9", verbose=True)
@@ -413,7 +440,7 @@ async def main() -> int:
         check(all(labels.values()) and labels["t1"] == "Ceiling Lights" and labels["t10"] == "Drip line",
               "layout labels are resolved (friendly name or custom)", str(labels))
         first_states = sim.events[1]["tiles"]
-        check([(p["id"], p["icon"]) for p in sim.layout["pages"]] == [("p1", "mdi:home"), ("p2", "")],
+        check([(p["id"], p["icon"]) for p in sim.layout["pages"]] == [("p1", "mdi:home"), ("p2", ""), ("p3", "")],
               "layout sent to the screen has page icons (accepted + defaulted to \"\")",
               str([(p["id"], p.get("icon")) for p in sim.layout["pages"]]))
         check(set(first_states) == ALL_TILES, "first states event has every tile", str(sorted(first_states)))
@@ -558,6 +585,79 @@ async def main() -> int:
         await expect_error(sim.action("t11", "open"), "invalid_action", "toggle tile 'open' -> invalid_action")
         await expect_error(sim.action("t12", "brightness", 50), "invalid_action", "toggle tile 'brightness' -> invalid_action")
         await expect_error(sim.action("t13", "stop"), "invalid_action", "toggle tile 'stop' -> invalid_action")
+
+        # ---- new kinds: first view models -----------------------------------------------
+        fs = first_states
+        check(fs["k1"]["status"] == "Run" and not fs["k1"]["on"] and fs["k3"]["status"] == "Run" and fs["k4"]["status"] == "Run",
+              "scene/button/input_button tiles: status Run", f"{fs['k1']['status']} {fs['k3']['status']} {fs['k4']['status']}")
+        check(fs["k2"]["status"] == "Run" and not fs["k2"]["on"], "idle script: Run, not on", sim.describe(fs["k2"]))
+        check(fs["k5"]["status"] == "15.6 °C" and fs["k6"]["status"] == "100 W" and fs["k5"]["detail"] == "",
+              "sensor tiles: value with unit", f"{fs['k5']['status']!r} {fs['k6']['status']!r}")
+        check(fs["k7"]["status"] == "Dry" and not fs["k7"]["on"] and fs["k8"]["status"] == "Detected" and fs["k8"]["on"],
+              "binary_sensor wording by device class (moisture, motion)", f"{fs['k7']['status']} {fs['k8']['status']}")
+        check(fs["k9"]["position"] == 70 and fs["k9"]["status"] == "Open" and fs["k9"]["detail"] == "70%",
+              "blind: position", sim.describe(fs["k9"]))
+        check(fs["k10"]["status"] == "Locked" and not fs["k10"]["on"] and fs["k10"]["code_required"] is False,
+              "lock: Locked, not highlighted, no code", sim.describe(fs["k10"]))
+        check(fs["k11"]["status"] == "Disarmed" and not fs["k11"]["on"] and fs["k11"]["code_required"] is True
+              and fs["k11"]["modes"] == ["arm_home", "arm_away", "arm_night", "arm_vacation"],
+              "alarm: Disarmed, supported arm modes, code required", sim.describe(fs["k11"]))
+        check(fs["k12"]["status"] == "Playing" and fs["k12"]["on"] and fs["k12"]["volume"] == 100
+              and fs["k12"]["detail"].startswith("Technohead – I Wanna Be A Hippy"),
+              "media: Playing, volume, Artist – Title", sim.describe(fs["k12"]))
+        check(all(fs[t]["position"] == -1 and fs[t]["volume"] == -1 and fs[t]["code_required"] is False for t in ("t1", "t6", "k5")),
+              "position/volume/code_required defaults on other tiles")
+
+        # ---- new kinds: actions -------------------------------------------------------------
+        mark = sim.mark()
+        await act("k2", "activate", None, lambda v: v["status"] == "Running" and v["on"], "script activate -> Running")
+        try:
+            await sim.wait_tile("k2", lambda v: v["status"] == "Run" and not v["on"], 10, since=mark)
+            check(True, "script finishes -> Run again")
+        except TimeoutError:
+            check(False, "script finishes -> Run again", sim.describe(sim.tiles["k2"]))
+        for tid, action, name in (("k1", "activate", "scene activate"), ("k3", "toggle", "button (scene kind) toggle = press"),
+                                  ("k4", "activate", "input_button activate")):
+            try:
+                check(await sim.action(tid, action) is None, f"{name} succeeds")
+            except CommandError as err:
+                check(False, f"{name} succeeds", str(err))
+        await expect_error(sim.action("k5", "toggle"), "invalid_action", "sensor tiles are read-only (toggle -> invalid_action)")
+        await expect_error(sim.action("k7", "activate"), "invalid_action", "binary_sensor tile action -> invalid_action")
+        await expect_error(sim.action("k1", "open"), "invalid_action", "scene tile 'open' -> invalid_action")
+
+        await act("k9", "position", 30, lambda v: v["position"] == 30 and not v["moving"], "blind position 30", )
+        await act("k9", "open", None, lambda v: v["moving"] and v["status"] == "Opening", "blind open -> moving")
+        await act("k9", "stop", None, lambda v: not v["moving"], "blind stop")
+        await expect_error(sim.action("k9", "position"), "invalid_action", "blind position without value -> invalid_action")
+        await expect_error(sim.action("k9", "position", 150), "invalid_action", "blind position 150 -> invalid_action")
+
+        await act("k10", "unlock", None, lambda v: v["status"] == "Unlocked" and v["on"], "lock unlock -> Unlocked (highlighted)")
+        await act("k10", "lock", None, lambda v: v["status"] == "Locked" and not v["on"], "lock lock -> Locked")
+        await act("k10", "toggle", None, lambda v: v["status"] == "Unlocked", "lock toggle -> Unlocked")
+        await act("k10", "toggle", None, lambda v: v["status"] == "Locked", "lock toggle -> Locked")
+        await expect_error(sim.action("k10", "unlock", 1234), "invalid_action", "lock code that is not a string -> invalid_action")
+
+        mark = sim.mark()
+        await act("k11", "arm_away", "1234", lambda v: v["status"] in ("Arming", "Armed away"), "alarm arm_away with code -> Arming")
+        try:
+            vm = await sim.wait_tile("k11", lambda v: v["status"] == "Armed away", 12, since=mark)
+            check(vm["on"], "alarm becomes Armed away (highlighted)", sim.describe(vm))
+        except TimeoutError:
+            check(False, "alarm becomes Armed away (highlighted)", sim.describe(sim.tiles["k11"]))
+        await expect_error(sim.action("k11", "disarm", "0000"), "service_failed", "alarm disarm with a wrong code -> service_failed")
+        await act("k11", "disarm", "1234", lambda v: v["status"] == "Disarmed" and not v["on"], "alarm disarm with code")
+        await expect_error(sim.action("k11", "toggle"), "invalid_action", "alarm 'toggle' -> invalid_action")
+
+        await act("k12", "volume", 30, lambda v: v["volume"] == 30, "media volume 30")
+        await act("k12", "play_pause", None, lambda v: v["status"] == "Paused" and not v["on"], "media play_pause -> Paused")
+        await act("k12", "play_pause", None, lambda v: v["status"] == "Playing", "media play_pause -> Playing")
+        before_detail = sim.tiles["k12"]["detail"]
+        await act("k12", "next", None, lambda v: v["detail"] != before_detail, "media next -> another track")
+        await act("k12", "previous", None, lambda v: v["detail"] == before_detail, "media previous -> back")
+        await act("k12", "toggle", None, lambda v: v["status"] == "Off", "media toggle -> Off")
+        await act("k12", "toggle", None, lambda v: v["status"] != "Off", "media toggle -> on again")
+        await expect_error(sim.action("k12", "volume", "loud"), "invalid_action", "media volume with text -> invalid_action")
 
         # ---- climate sensors: updates and fallback ----------------------------------------
         async def set_helper(domain: str, service: str, entity: str, **data: Any) -> int:

@@ -14,10 +14,11 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_conversion import TemperatureConverter
 
-from .const import KIND_VALVE
+from .const import ALARM_MODES, KIND_SCENE, KIND_SENSOR, KIND_VALVE
 
 HVAC_MODE_LABELS: dict[str, str] = {
     "off": "Off",
@@ -61,6 +62,9 @@ def base_view_model() -> dict[str, Any]:
         "modes": [],
         "unit": "",
         "humidity": None,
+        "position": -1,
+        "volume": -1,
+        "code_required": False,
     }
 
 
@@ -107,9 +111,39 @@ def tile_view_model(
     value = state.state
     attrs = state.attributes
 
+    kind = tile.get("kind")
+    if kind == KIND_SCENE:
+        # Scenes and buttons have a timestamp (or unknown) as state.
+        running = domain == "script" and value == "on"
+        vm["on"] = running
+        vm["status"] = "Running" if running else "Run"
+        return vm
+
     if value == STATE_UNKNOWN and domain not in ("button", "climate"):
         vm["status"] = "Unknown"
         return vm
+
+    if kind == KIND_SENSOR:
+        return _sensor(hass, vm, state)
+
+    if domain == "lock":
+        vm["on"] = value != "locked"
+        vm["status"] = LOCK_LABELS.get(value, value.replace("_", " ").capitalize())
+        vm["moving"] = value in ("locking", "unlocking", "opening")
+        vm["code_required"] = attrs.get("code_format") is not None
+        return vm
+
+    if domain == "alarm_control_panel":
+        vm["on"] = value.startswith("armed_") or value == "triggered"
+        vm["status"] = ALARM_LABELS.get(value, value.replace("_", " ").capitalize())
+        features = int(attrs.get("supported_features") or 0)
+        vm["modes"] = [mode for mode, bit in ALARM_MODES if features & bit]
+        # A keypad is needed whenever the panel uses a code at all.
+        vm["code_required"] = attrs.get("code_format") is not None
+        return vm
+
+    if domain == "media_player":
+        return _media(vm, state)
 
     if domain == "light":
         on = value == "on"
@@ -159,6 +193,7 @@ def tile_view_model(
         vm["status"] = value.replace("_", " ").capitalize()
         position = _float(attrs.get("current_position"))
         if position is not None:
+            vm["position"] = int(position)
             vm["detail"] = f"{int(position)}%"
         return vm
 
@@ -166,6 +201,107 @@ def tile_view_model(
         return _climate(hass, vm, state, tile)
 
     vm["status"] = value.capitalize()
+    return vm
+
+
+LOCK_LABELS: dict[str, str] = {
+    "locked": "Locked",
+    "unlocked": "Unlocked",
+    "locking": "Locking",
+    "unlocking": "Unlocking",
+    "jammed": "Jammed",
+    "open": "Open",
+    "opening": "Opening",
+}
+
+ALARM_LABELS: dict[str, str] = {
+    "disarmed": "Disarmed",
+    "armed_home": "Armed home",
+    "armed_away": "Armed away",
+    "armed_night": "Armed night",
+    "armed_vacation": "Armed vacation",
+    "armed_custom_bypass": "Armed custom",
+    "arming": "Arming",
+    "pending": "Pending",
+    "triggered": "Triggered",
+    "disarming": "Disarming",
+}
+
+MEDIA_LABELS: dict[str, str] = {
+    "playing": "Playing",
+    "paused": "Paused",
+    "idle": "Idle",
+    "off": "Off",
+    "on": "On",
+    "standby": "Standby",
+    "buffering": "Buffering",
+}
+
+BINARY_WORDS: dict[str, tuple[str, str]] = {
+    "door": ("Open", "Closed"),
+    "garage_door": ("Open", "Closed"),
+    "window": ("Open", "Closed"),
+    "opening": ("Open", "Closed"),
+    "motion": ("Detected", "Clear"),
+    "occupancy": ("Detected", "Clear"),
+    "presence": ("Detected", "Clear"),
+    "moisture": ("Wet", "Dry"),
+}
+
+MEDIA_VOLUME_SET = 4  # MediaPlayerEntityFeature.VOLUME_SET
+
+
+def _media(vm: dict[str, Any], state: State) -> dict[str, Any]:
+    attrs = state.attributes
+    vm["on"] = state.state == "playing"
+    vm["status"] = MEDIA_LABELS.get(state.state, state.state.capitalize())
+    artist = attrs.get("media_artist") or attrs.get("media_album_artist")
+    title = attrs.get("media_title")
+    if artist and title:
+        vm["detail"] = f"{artist} – {title}"
+    elif title:
+        vm["detail"] = str(title)
+    elif attrs.get("source"):
+        vm["detail"] = str(attrs["source"])
+    level = _float(attrs.get("volume_level"))
+    if int(attrs.get("supported_features") or 0) & MEDIA_VOLUME_SET and level is not None:
+        vm["volume"] = round(level * 100)
+    return vm
+
+
+def _display_precision(hass: HomeAssistant, entity_id: str) -> int | None:
+    """User's display precision for a sensor, else the integration's suggestion."""
+    entry = er.async_get(hass).async_get(entity_id)
+    if entry is None:
+        return None
+    options = entry.options.get("sensor") or {}
+    for key in ("display_precision", "suggested_display_precision"):
+        if isinstance(options.get(key), int):
+            return int(options[key])
+    return None
+
+
+def _sensor(hass: HomeAssistant, vm: dict[str, Any], state: State) -> dict[str, Any]:
+    attrs = state.attributes
+    if state.domain == "binary_sensor":
+        on = state.state == "on"
+        words = BINARY_WORDS.get(attrs.get("device_class") or "", ("On", "Off"))
+        vm["on"] = on
+        vm["status"] = words[0] if on else words[1]
+        return vm
+    value = state.state
+    if attrs.get("device_class") == "timestamp" and (when := dt_util.parse_datetime(value)):
+        local = dt_util.as_local(when)
+        today = dt_util.now().date() == local.date()
+        vm["status"] = local.strftime("%H:%M" if today else "%d %b %H:%M")
+        return vm
+    number = _float(value)
+    if number is not None:
+        precision = _display_precision(hass, state.entity_id)
+        if precision is not None:
+            value = f"{number:.{precision}f}"
+    unit = attrs.get(ATTR_UNIT_OF_MEASUREMENT)
+    vm["status"] = f"{value} {unit}" if unit else value
     return vm
 
 

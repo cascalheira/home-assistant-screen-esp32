@@ -71,6 +71,10 @@ automation:
       - delay: 0
 
 template:
+  - image:
+      - name: Dev Picture
+        unique_id: dev_picture
+        url: "http://localhost:8123/static/icons/favicon-1024x1024.png"
   - sensor:
       - name: Living Room Temperature
         unique_id: dev_living_room_temperature
@@ -128,3 +132,26 @@ template:
           - action: input_boolean.turn_off
             target:
               entity_id: input_boolean.porch_light
+
+# For scene tiles.
+input_button:
+  doorbell_test:
+    name: Doorbell test
+
+script:
+  movie_time:
+    alias: Movie time
+    sequence:
+      - action: light.turn_off
+        target:
+          entity_id: light.ceiling_lights
+      - delay: 3
+
+scene:
+  - id: dev_evening
+    name: Evening
+    entities:
+      light.ceiling_lights:
+        state: "on"
+        brightness: 120
+      light.porch_light: "on"

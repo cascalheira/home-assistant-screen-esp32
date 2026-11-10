@@ -164,6 +164,7 @@ class HAWebSocket:
 VM_KEYS = {
     "available", "on", "status", "detail", "moving", "brightness", "current",
     "target", "min", "max", "step", "mode", "modes", "unit", "humidity",
+    "position", "volume", "code_required",
 }
 
 
@@ -278,6 +279,14 @@ class ScreenSim:
             parts.append("moving")
         if vm["brightness"] >= 0:
             parts.append(f"bri={vm['brightness']}")
+        if vm["position"] >= 0:
+            parts.append(f"pos={vm['position']}")
+        if vm["volume"] >= 0:
+            parts.append(f"vol={vm['volume']}")
+        if vm["code_required"]:
+            parts.append("code")
+        if vm["modes"] and not vm["mode"]:
+            parts.append(f"modes={vm['modes']}")
         if vm["mode"]:
             parts.append(f"mode={vm['mode']} modes={vm['modes']} target={vm['target']} cur={vm['current']} {vm['min']}-{vm['max']}/{vm['step']}{vm['unit']} hum={vm['humidity']}")
         return " ".join(parts)

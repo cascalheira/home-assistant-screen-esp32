@@ -46,7 +46,8 @@ The firmware stores the HA base URL and the refresh token in NVS, never the pass
       "tiles": [                   // at most cols*rows, never overlapping
         {
           "id": "t1",              // stable string id, unique within the layout
-          "kind": "light",         // light | gate | garage | valve | climate | toggle
+          "kind": "light",         // light | gate | garage | valve | climate | toggle |
+                                   // scene | sensor | blind | lock | alarm | media
           "entity_id": "light.kitchen",
           "label": "",             // 0-48 characters; "" = use the entity's friendly name
           "x": 0, "y": 0,          // top-left cell, 0-based
@@ -77,6 +78,12 @@ Allowed entity domains per kind:
 | valve | `valve`, `switch` |
 | climate | `climate` |
 | toggle | `automation`, `input_boolean`, `switch` |
+| scene | `scene`, `script`, `button`, `input_button` |
+| sensor | `sensor`, `binary_sensor` |
+| blind | `cover` |
+| lock | `lock` |
+| alarm | `alarm_control_panel` |
+| media | `media_player` |
 
 Page icons. `icon` is `""` or exactly one of these names. The firmware has
 these glyphs compiled in, and the integration rejects anything else with
@@ -149,27 +156,32 @@ All keys are always present, so the firmware can parse a fixed struct.
 {
   "available": true,     // false: entity missing or unavailable
   "on": true,            // highlight the tile (light on, cover open, valve open, climate not off,
-                         // toggle on/enabled)
+                         // toggle on/enabled, script running, binary_sensor on, lock not
+                         // locked, alarm armed/triggered, media playing)
   "status": "Open",      // short state text: On/Off, Open/Closed/Opening/Closing/Stopped,
-                         // Cooling/Heating/Off/Idle ..., Enabled/Disabled, Unavailable
+                         // Cooling/Heating/Off/Idle ..., Enabled/Disabled, Run/Running,
+                         // "21.5 °C", Locked/Unlocked, Disarmed/Armed away, Playing ..., Unavailable
   "detail": "75%",       // secondary text or "": brightness, position,
-                         // "22.5 °C → 24 °C · 45%", "Ran 5 min ago"
-  "moving": false,       // cover/valve is opening or closing
+                         // "22.5 °C → 24 °C · 45%", "Ran 5 min ago", "Artist – Title"
+  "moving": false,       // cover/valve opening or closing, lock locking/unlocking/opening
   "brightness": 75,      // light 0-100; -1 when not dimmable or not a light
   "current": 22.5,       // climate current temperature; null otherwise
   "target": 24.0,        // climate target temperature; null otherwise
   "min": 16.0, "max": 30.0, "step": 0.5,   // climate limits; null otherwise
   "mode": "cool",        // climate hvac mode; "" otherwise
-  "modes": ["off","cool","heat"],          // climate hvac modes; [] otherwise
+  "modes": ["off","cool","heat"],          // climate hvac modes; alarm arm modes; [] otherwise
   "unit": "°C",          // temperature unit; "" otherwise
-  "humidity": 45         // climate humidity in whole percent; null when unknown or not climate
+  "humidity": 45,        // climate humidity in whole percent; null when unknown or not climate
+  "position": 40,        // cover/valve position 0-100; -1 when not reported or not a cover/valve
+  "volume": 30,          // media player volume 0-100; -1 when not settable or not a media player
+  "code_required": false // lock/alarm takes a code (show a keypad); false otherwise
 }
 ```
 
 Details:
 
 - `status` is `Unknown` when HA has no state yet (`unknown`), except for
-  buttons, whose status is always `Press`.
+  buttons, whose status is always `Press` (`Run` on scene tiles), and scene tiles.
 - Climate temperatures are in HA's configured unit system (`unit`). `step` is the
   entity's `target_temp_step`, else 0.5 for °C and 1 for °F.
 - Climate `current` is the numeric state of `temperature_entity` when it is set
@@ -191,6 +203,40 @@ Details:
   recomputes it every minute and sends `states` when the text changes.
   `input_boolean` and `switch` report `On`/`Off` with `detail` `""`. Other keys
   keep their defaults: `moving` false, `brightness` -1, climate keys null/""/[].
+- Scene tiles: `status` is `Run`. A `script` that is running has `on` true and
+  `status` `Running`. `detail` is `""`.
+- Sensor tiles:
+  - A `sensor` has its state plus unit as `status`, for example `"21.5 °C"` or
+    `"830 W"`. A numeric value is rounded to the entity's display precision (the
+    user's setting, else the integration's suggestion) when there is one;
+    otherwise it is shown as HA reports it. A `timestamp` sensor shows local
+    `HH:MM`, or `DD Mon HH:MM` when it is not today.
+  - A `binary_sensor` uses wording by device class: door, garage_door, window,
+    opening → `Open`/`Closed`; motion, occupancy, presence → `Detected`/`Clear`;
+    moisture → `Wet`/`Dry`; anything else → `On`/`Off`. `on` = state on.
+  - `detail` is `""`.
+- Blind tiles (any cover) report like gate tiles, plus `position`.
+  `position` is also filled on gate/garage/valve tiles when the entity reports one.
+- Lock tiles: `status` is `Locked`, `Unlocked`, `Locking`, `Unlocking`, `Jammed`,
+  `Open` or `Opening`. `on` = not `locked`. `code_required` = the lock has a
+  `code_format`.
+- Alarm tiles:
+  - `status` is `Disarmed`, `Armed home`, `Armed away`, `Armed night`,
+    `Armed vacation`, `Armed custom`, `Arming`, `Pending`, `Triggered` or
+    `Disarming`.
+  - `on` = armed or triggered.
+  - `modes` = the panel's supported subset of `["arm_home","arm_away","arm_night","arm_vacation"]`,
+    in that order.
+  - `code_required` = the panel has a `code_format`, so it takes a code at all.
+    It is the same flag for arming and disarming, because a panel whose arming
+    needs no code (`code_arm_required` false) still needs one to disarm.
+- Media tiles:
+  - `status` is `Playing`, `Paused`, `Idle`, `Off`, `On`, `Standby` or
+    `Buffering`.
+  - `detail` is `"Artist – Title"`, else the title, else the source.
+  - `volume` = `volume_level` × 100 when the player supports setting the
+    volume.
+  - `on` = playing.
 
 ### `esp32_screen/action`
 
@@ -206,6 +252,12 @@ Details:
 | valve | `toggle` (valve: as for covers), `open`, `close` |
 | climate | `toggle` (off ⇄ last non-off mode, else first non-off mode), `set_temperature` (value number), `set_mode` (value string) |
 | toggle | `toggle`, `on`, `off` (`<domain>.toggle` / `turn_on` / `turn_off` for automation, input_boolean, switch) |
+| scene | `activate`, `toggle` (same as activate): `scene.turn_on`, `script.turn_on`, `button.press`, `input_button.press` |
+| sensor | none (read-only; every action is `invalid_action`) |
+| blind | `toggle`, `open`, `close`, `stop` (as for gate), `position` (value 0-100; `invalid_action` if the cover cannot be positioned) |
+| lock | `lock`, `unlock`, `toggle` (unlock if locked, else lock); optional `value` = code string |
+| alarm | `arm_home`, `arm_away`, `arm_night`, `arm_vacation` (only modes in `modes`), `disarm`; optional `value` = code string |
+| media | `play_pause`, `next`, `previous`, `volume` (value 0-100), `toggle` (turn_on when off, else turn_off) |
 
 An action not listed for the tile's kind is `invalid_action`.
 
@@ -220,6 +272,8 @@ How actions map to entities:
   restart) and is also learned from state changes made elsewhere.
 - `set_mode` with a mode not in `modes`, or a missing/non-numeric `value`, is
   `invalid_action`.
+- A code `value` that is not a string is `invalid_action`. A wrong code is
+  rejected by HA and comes back as `service_failed`.
 
 Result: `null` on success. Errors use HA's standard error result with codes
 `not_found` (screen or tile), `invalid_action`, or `service_failed`.

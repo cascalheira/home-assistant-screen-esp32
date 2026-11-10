@@ -35,6 +35,12 @@ KIND_GARAGE: Final = "garage"
 KIND_VALVE: Final = "valve"
 KIND_CLIMATE: Final = "climate"
 KIND_TOGGLE: Final = "toggle"
+KIND_SCENE: Final = "scene"
+KIND_SENSOR: Final = "sensor"
+KIND_BLIND: Final = "blind"
+KIND_LOCK: Final = "lock"
+KIND_ALARM: Final = "alarm"
+KIND_MEDIA: Final = "media"
 
 KIND_DOMAINS: Final[dict[str, tuple[str, ...]]] = {
     KIND_LIGHT: ("light", "switch"),
@@ -43,6 +49,12 @@ KIND_DOMAINS: Final[dict[str, tuple[str, ...]]] = {
     KIND_VALVE: ("valve", "switch"),
     KIND_CLIMATE: ("climate",),
     KIND_TOGGLE: ("automation", "input_boolean", "switch"),
+    KIND_SCENE: ("scene", "script", "button", "input_button"),
+    KIND_SENSOR: ("sensor", "binary_sensor"),
+    KIND_BLIND: ("cover",),
+    KIND_LOCK: ("lock",),
+    KIND_ALARM: ("alarm_control_panel",),
+    KIND_MEDIA: ("media_player",),
 }
 
 KIND_ACTIONS: Final[dict[str, tuple[str, ...]]] = {
@@ -52,7 +64,21 @@ KIND_ACTIONS: Final[dict[str, tuple[str, ...]]] = {
     KIND_VALVE: ("toggle", "open", "close"),
     KIND_CLIMATE: ("toggle", "set_temperature", "set_mode"),
     KIND_TOGGLE: ("toggle", "on", "off"),
+    KIND_SCENE: ("activate", "toggle"),
+    KIND_SENSOR: (),
+    KIND_BLIND: ("toggle", "open", "close", "stop", "position"),
+    KIND_LOCK: ("toggle", "lock", "unlock"),
+    KIND_ALARM: ("arm_home", "arm_away", "arm_night", "arm_vacation", "disarm"),
+    KIND_MEDIA: ("toggle", "play_pause", "next", "previous", "volume"),
 }
+
+# Alarm arm modes in `modes` order, with the alarm_control_panel feature bit.
+ALARM_MODES: Final[tuple[tuple[str, int], ...]] = (
+    ("arm_home", 1),
+    ("arm_away", 2),
+    ("arm_night", 4),
+    ("arm_vacation", 32),
+)
 
 # Page icons the firmware can draw (glyphs compiled in), in picker order.
 PAGE_ICONS: Final[tuple[str, ...]] = (

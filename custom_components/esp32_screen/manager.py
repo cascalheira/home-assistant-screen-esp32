@@ -38,6 +38,12 @@ from .const import (
     ERR_SERVICE_FAILED,
     KIND_ACTIONS,
     KIND_CLIMATE,
+    ALARM_MODES,
+    KIND_ALARM,
+    KIND_BLIND,
+    KIND_LOCK,
+    KIND_MEDIA,
+    KIND_SCENE,
     KIND_TOGGLE,
     MANUFACTURER,
     SENSOR_FIELDS,
@@ -587,10 +593,6 @@ class ScreenManager:
         domain: str = state.domain
         current: str = state.state
 
-        if tile["kind"] == KIND_TOGGLE:
-            service = {"toggle": "toggle", "on": "turn_on", "off": "turn_off"}[action]
-            return (domain, service), {}
-
         def number(low: float | None = None, high: float | None = None) -> float:
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise ActionError(ERR_INVALID_ACTION, f"'{action}' needs a number value")
@@ -599,6 +601,53 @@ class ScreenManager:
                     ERR_INVALID_ACTION, f"value must be between {low} and {high}"
                 )
             return float(value)
+
+        kind = tile["kind"]
+        if kind == KIND_TOGGLE:
+            service = {"toggle": "toggle", "on": "turn_on", "off": "turn_off"}[action]
+            return (domain, service), {}
+
+        def code() -> dict[str, Any]:
+            if value is None or value == "":
+                return {}
+            if not isinstance(value, str):
+                raise ActionError(ERR_INVALID_ACTION, "the code must be a string")
+            return {"code": value}
+
+        features = int(state.attributes.get("supported_features") or 0)
+
+        if kind == KIND_SCENE:  # activate / toggle
+            return (domain, "press" if domain in ("button", "input_button") else "turn_on"), {}
+
+        if kind == KIND_LOCK:
+            if action == "toggle":
+                action = "unlock" if current == "locked" else "lock"
+            return ("lock", action), code()
+
+        if kind == KIND_ALARM:
+            if action == "disarm":
+                return ("alarm_control_panel", "alarm_disarm"), code()
+            bit = dict(ALARM_MODES)[action]
+            if not features & bit:
+                raise ActionError(ERR_INVALID_ACTION, f"{state.entity_id} does not support {action}")
+            return ("alarm_control_panel", f"alarm_{action}"), code()
+
+        if kind == KIND_MEDIA:
+            if action == "toggle":
+                return ("media_player", "turn_on" if current == "off" else "turn_off"), {}
+            if action == "volume":
+                return ("media_player", "volume_set"), {"volume_level": round(number(0, 100)) / 100}
+            service = {
+                "play_pause": "media_play_pause",
+                "next": "media_next_track",
+                "previous": "media_previous_track",
+            }[action]
+            return ("media_player", service), {}
+
+        if kind == KIND_BLIND and action == "position":
+            if not features & 4:  # CoverEntityFeature.SET_POSITION
+                raise ActionError(ERR_INVALID_ACTION, f"{state.entity_id} cannot be set to a position")
+            return ("cover", "set_cover_position"), {"position": round(number(0, 100))}
 
         if domain == "light":
             if action == "toggle":

@@ -8,6 +8,12 @@ const KINDS = {
   valve: { label: "Valve", domains: ["valve", "switch"], icon: "mdi:valve-closed", iconOn: "mdi:valve-open", color: "#4dd0e1" },
   climate: { label: "Climate", domains: ["climate"], icon: "mdi:thermostat", iconOn: "mdi:thermostat", color: "#ff8a65" },
   toggle: { label: "Toggle", domains: ["automation", "input_boolean", "switch"], icon: "mdi:toggle-switch-off-outline", iconOn: "mdi:toggle-switch", pickerIcon: "mdi:toggle-switch", color: "#81c784" },
+  scene: { label: "Scene", domains: ["scene", "script", "button", "input_button"], icon: "mdi:play-circle-outline", iconOn: "mdi:play-circle", pickerIcon: "mdi:palette", color: "#ba68c8" },
+  sensor: { label: "Sensor", domains: ["sensor", "binary_sensor"], icon: "mdi:gauge", iconOn: "mdi:gauge", color: "#90a4ae" },
+  blind: { label: "Blind", domains: ["cover"], icon: "mdi:blinds", iconOn: "mdi:blinds-open", pickerIcon: "mdi:blinds-open", color: "#4fc3f7" },
+  lock: { label: "Lock", domains: ["lock"], icon: "mdi:lock", iconOn: "mdi:lock-open-variant", pickerIcon: "mdi:lock", color: "#e57373" },
+  alarm: { label: "Alarm", domains: ["alarm_control_panel"], icon: "mdi:shield-off-outline", iconOn: "mdi:shield-lock", pickerIcon: "mdi:shield-home", color: "#ef5350" },
+  media: { label: "Media", domains: ["media_player"], icon: "mdi:speaker", iconOn: "mdi:speaker-play", pickerIcon: "mdi:music", color: "#4db6ac" },
 };
 // Page icons the firmware can draw (must match const.PAGE_ICONS), in picker order.
 const PAGE_ICONS = [
@@ -83,6 +89,12 @@ const toUnit = (value, from, to) => {
   const c = from === "°F" ? ((value - 32) * 5) / 9 : from === "K" ? value - 273.15 : from === "°C" ? value : null;
   if (c === null) return value;
   return to === "°F" ? (c * 9) / 5 + 32 : to === "K" ? c + 273.15 : c;
+};
+
+const BINARY_WORDS = {
+  door: ["Open", "Closed"], garage_door: ["Open", "Closed"], window: ["Open", "Closed"], opening: ["Open", "Closed"],
+  motion: ["Detected", "Clear"], occupancy: ["Detected", "Clear"], presence: ["Detected", "Clear"],
+  moisture: ["Wet", "Dry"],
 };
 
 const rectsOverlap = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
@@ -278,7 +290,36 @@ class Esp32ScreenPanel extends HTMLElement {
     view.available = true;
     const domain = st.entity_id.split(".")[0];
     const a = st.attributes;
-    if (domain === "automation") {
+    if (tile.kind === "scene") {
+      view.on = domain === "script" && st.state === "on";
+      view.status = view.on ? "Running" : "Run";
+    } else if (st.state === "unknown") {
+      view.status = "Unknown";
+    } else if (tile.kind === "sensor") {
+      if (domain === "binary_sensor") {
+        const words = BINARY_WORDS[a.device_class] || ["On", "Off"];
+        view.on = st.state === "on";
+        view.status = view.on ? words[0] : words[1];
+      } else {
+        let value = st.state;
+        const precision = this._hass.entities?.[st.entity_id]?.display_precision;
+        if (precision != null && value !== "" && Number.isFinite(Number(value))) value = Number(value).toFixed(precision);
+        view.status = a.unit_of_measurement ? `${value} ${a.unit_of_measurement}` : value;
+      }
+    } else if (domain === "lock") {
+      view.on = st.state !== "locked";
+      view.status = cap(st.state);
+      if (a.code_format) view.detail = "Code";
+    } else if (domain === "alarm_control_panel") {
+      view.on = st.state.startsWith("armed_") || st.state === "triggered";
+      view.status = st.state === "armed_custom_bypass" ? "Armed custom" : cap(st.state);
+    } else if (domain === "media_player") {
+      view.on = st.state === "playing";
+      view.status = cap(st.state);
+      const artist = a.media_artist || a.media_album_artist;
+      view.detail = artist && a.media_title ? `${artist} – ${a.media_title}` : a.media_title || a.source || "";
+      if (a.volume_level != null && (a.supported_features & 4)) view.value = `${Math.round(a.volume_level * 100)}%`;
+    } else if (domain === "automation") {
       view.on = st.state === "on";
       view.status = view.on ? "Enabled" : "Disabled";
       view.detail = ranAgo(a.last_triggered);
@@ -1363,7 +1404,7 @@ const STYLE = `
   .side-actions { display: flex; justify-content: space-between; gap: 8px; }
   .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .row4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
-  .kinds { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+  .kinds { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
   .kind {
     font: inherit; font-size: 11px; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 2px; border-radius: 8px;
     border: 1px solid var(--line); background: transparent; color: var(--primary-text-color); cursor: pointer;

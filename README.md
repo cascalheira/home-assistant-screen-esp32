@@ -144,10 +144,12 @@ and streams tile states to the screens. The contract with the firmware is
    add the screen by its MAC address. Pick a page (up to 6, 1-8 × 1-6 cells),
    click an empty cell to add a tile, drag tiles to move them, drag the corner
    to resize, then press **Save**. Connected screens update right away.
-   Tile kinds are light, gate, garage, valve, climate and toggle. A toggle tile
-   enables or disables an automation, or switches an input_boolean or switch.
-   A climate tile can show a room temperature or humidity sensor instead of
-   the AC's own reading.
+   Tile kinds are light, gate, garage, valve, climate, toggle, scene, sensor,
+   blind, lock, alarm and media. A toggle tile enables or disables an automation,
+   or switches an input_boolean or switch. A scene tile runs a scene, script or
+   button. A sensor tile only shows a value. Lock and alarm tiles ask for a code
+   on the screen when the entity uses one. A climate tile can show a room
+   temperature or humidity sensor instead of the AC's own reading.
 
 Each screen also appears as a device (manufacturer "ESP32 Screen"). Deleting
 that device deletes the screen's layout.
