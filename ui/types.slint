@@ -1,0 +1,41 @@
+// Data types shared between Rust and the UI.
+
+export struct NetworkItem {
+    ssid: string,
+    bars: int, // 1-4
+    secure: bool,
+}
+
+export struct InstanceItem {
+    name: string,
+    url: string,
+}
+
+export struct PageTab {
+    title: string,
+    icon: string, // glyph from the Material Design Icons font, "" for none
+}
+
+// One tile on the dashboard grid plus its current state (docs/protocol.md).
+export struct TileData {
+    id: string,
+    kind: string, // light | gate | garage | valve | climate | toggle
+    domain: string, // entity domain, e.g. "automation"
+    label: string,
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    available: bool,
+    on: bool,
+    status: string,
+    detail: string,
+    moving: bool,
+    mode: string, // climate hvac mode
+    value: string, // large text on tall climate tiles, e.g. "23.5°"
+}
+
+export struct ModeItem {
+    id: string,
+    label: string,
+}

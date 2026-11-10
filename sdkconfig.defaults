@@ -1,0 +1,66 @@
+# ---- Flash and partitions (16 MB quad flash) ----
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+# The custom partition table (partitions.csv) is switched on by
+# scripts/cargo-esp.sh, which passes its absolute path. ESP-IDF builds in a
+# nested output folder and would not find a relative path.
+
+# ---- CPU and caches ----
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
+CONFIG_ESP32S3_DATA_CACHE_64KB=y
+CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+# ---- 8 MB octal PSRAM ----
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=65536
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+# Run code and constants from PSRAM so flash writes (NVS) do not stall the
+# RGB panel, which streams from PSRAM continuously.
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y
+
+# ---- RGB LCD ----
+CONFIG_LCD_RGB_ISR_IRAM_SAFE=y
+CONFIG_LCD_RGB_RESTART_IN_VSYNC=y
+
+# ---- Console on UART0 (CH340). GPIO19/20 are the native USB pins, but this
+# board uses them for the touch controller's I2C bus, so USB stays off. ----
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# ---- Tasks ----
+CONFIG_FREERTOS_HZ=1000
+# Slint's layout and rendering code is stack hungry.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=32768
+CONFIG_PTHREAD_TASK_STACK_SIZE_DEFAULT=16384
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+
+# ---- Wi-Fi ----
+CONFIG_ESP_WIFI_ENABLE_WPA3_SAE=y
+CONFIG_LWIP_LOCAL_HOSTNAME="esp32-screen"
+
+# ---- Home Assistant connection ----
+# Resolve "homeassistant.local" style names through mDNS.
+CONFIG_LWIP_DNS_SUPPORT_MDNS_QUERIES=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+CONFIG_ESP_HTTP_CLIENT_ENABLE_HTTPS=y
+
+# ---- SD card ----
+# Long file names (otherwise only 8.3 names like LICENC~1.BRO are visible).
+CONFIG_FATFS_LFN_HEAP=y
+CONFIG_FATFS_MAX_LFN=255
+
+# ---- Firmware updates ----
+# A new image boots "pending verify"; if it doesn't mark itself valid (it
+# does after running for a while, see src/ota.rs) the bootloader returns to
+# the previous image on the next reset.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

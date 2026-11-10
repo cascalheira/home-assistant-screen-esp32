@@ -1,0 +1,208 @@
+// Screensaver clock: a plain clock or a flip clock.
+//
+// Digits are images (ui/clock/*.png, made by scripts/gen_clock_digits.py),
+// not text: Slint pre-renders every character at every font size, and a
+// 200 px font would cost megabytes of flash. Single-colour images are stored
+// as alpha maps and can be scaled, which the flip animation relies on.
+
+export global ClockGlyphs {
+    out property <[image]> digits: [
+        @image-url("clock/0.png"),
+        @image-url("clock/1.png"),
+        @image-url("clock/2.png"),
+        @image-url("clock/3.png"),
+        @image-url("clock/4.png"),
+        @image-url("clock/5.png"),
+        @image-url("clock/6.png"),
+        @image-url("clock/7.png"),
+        @image-url("clock/8.png"),
+        @image-url("clock/9.png"),
+    ];
+    // Size of the digit images.
+    out property <length> w: 148px;
+    out property <length> h: 167px;
+}
+
+// One flip-clock card.
+//
+// When the digit changes, Rust sets `prev` (old digit) and `cur` (new digit)
+// and drives `p` from 0 to 1 over the flip (Rust-driven: a Slint binding
+// animation started noticeably late here):
+//   0.0-0.5  the upper flap with the old digit folds down onto the hinge
+//   0.5-1.0  the lower flap with the new digit unfolds from the hinge
+component FlipDigit inherits Rectangle {
+    in property <int> prev;
+    in property <int> cur;
+    in property <float> p: 1;
+    property <length> half: self.height / 2;
+    property <length> ix: (self.width - ClockGlyphs.w) / 2;
+    property <length> iy: (self.height - ClockGlyphs.h) / 2;
+    property <color> ink: #e9ecf2;
+    property <color> card: #1b1f27;
+
+    width: 164px;
+    height: 220px;
+    border-radius: 14px;
+    background: root.card;
+
+    // Upper half: always the new digit (uncovered as the flap falls).
+    Rectangle {
+        y: 0px;
+        height: root.half;
+        clip: true;
+        Image {
+            x: root.ix;
+            y: root.iy;
+            width: ClockGlyphs.w;
+            height: ClockGlyphs.h;
+            source: ClockGlyphs.digits[root.cur];
+            colorize: root.ink;
+        }
+    }
+    // Lower half: the old digit until the lower flap has landed.
+    Rectangle {
+        y: root.half;
+        height: root.half;
+        clip: true;
+        Image {
+            x: root.ix;
+            y: root.iy - root.half;
+            width: ClockGlyphs.w;
+            height: ClockGlyphs.h;
+            source: ClockGlyphs.digits[root.p >= 1 ? root.cur : root.prev];
+            colorize: root.ink;
+        }
+    }
+    // Falling upper flap: the old digit's top half, squashed towards the hinge.
+    if root.p < 0.5: Rectangle {
+        property <float> s: 1 - root.p * 2;
+        y: root.half - root.half * self.s;
+        height: root.half * self.s;
+        clip: true;
+        border-top-left-radius: 14px;
+        border-top-right-radius: 14px;
+        // Darkens as it turns away from the viewer.
+        background: root.card.darker(0.6 * (1 - self.s));
+        Image {
+            x: root.ix;
+            y: root.iy * parent.s;
+            width: ClockGlyphs.w;
+            height: ClockGlyphs.h * parent.s;
+            image-fit: fill;
+            source: ClockGlyphs.digits[root.prev];
+            colorize: root.ink;
+        }
+    }
+    // Unfolding lower flap: the new digit's bottom half, growing from the hinge.
+    if root.p >= 0.5 && root.p < 1: Rectangle {
+        property <float> s: (root.p - 0.5) * 2;
+        y: root.half;
+        height: root.half * self.s;
+        clip: true;
+        border-bottom-left-radius: 14px;
+        border-bottom-right-radius: 14px;
+        background: root.card.brighter(0.4 * (1 - self.s));
+        Image {
+            x: root.ix;
+            y: (root.iy - root.half) * parent.s;
+            width: ClockGlyphs.w;
+            height: ClockGlyphs.h * parent.s;
+            image-fit: fill;
+            source: ClockGlyphs.digits[root.cur];
+            colorize: root.ink;
+        }
+    }
+    // Hinge.
+    Rectangle {
+        y: root.half - 1px;
+        height: 2px;
+        background: #07080b;
+    }
+}
+
+component PlainDigit inherits Image {
+    in property <int> value;
+    width: ClockGlyphs.w;
+    height: ClockGlyphs.h;
+    source: ClockGlyphs.digits[root.value];
+    colorize: #e9ecf2;
+}
+
+component Colon inherits VerticalLayout {
+    alignment: center;
+    spacing: 34px;
+    width: 40px;
+    for i in 2: Rectangle {
+        width: 16px;
+        height: 16px;
+        x: 12px;
+        border-radius: 8px;
+        background: #9aa3b5;
+    }
+}
+
+export component ScreenSaver inherits Rectangle {
+    in property <bool> flip;
+    // One property per card, not arrays: changing one element of an array
+    // would make every card redraw.
+    in property <int> d0;
+    in property <int> d1;
+    in property <int> d2;
+    in property <int> d3;
+    in property <int> prev0;
+    in property <int> prev1;
+    in property <int> prev2;
+    in property <int> prev3;
+    in property <float> p0: 1; // flip progress, 0-1; 1 = at rest
+    in property <float> p1: 1;
+    in property <float> p2: 1;
+    in property <float> p3: 1;
+    in property <string> date;
+
+    background: #000000;
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 30px;
+        if root.flip: HorizontalLayout {
+            alignment: center;
+            spacing: 12px;
+            FlipDigit {
+                prev: root.prev0;
+                cur: root.d0;
+                p: root.p0;
+            }
+            FlipDigit {
+                prev: root.prev1;
+                cur: root.d1;
+                p: root.p1;
+            }
+            Colon { }
+            FlipDigit {
+                prev: root.prev2;
+                cur: root.d2;
+                p: root.p2;
+            }
+            FlipDigit {
+                prev: root.prev3;
+                cur: root.d3;
+                p: root.p3;
+            }
+        }
+        if !root.flip: HorizontalLayout {
+            alignment: center;
+            spacing: 4px;
+            PlainDigit { value: root.d0; }
+            PlainDigit { value: root.d1; }
+            Colon { }
+            PlainDigit { value: root.d2; }
+            PlainDigit { value: root.d3; }
+        }
+        Text {
+            text: root.date;
+            font-size: 28px;
+            color: #8b93a3;
+            horizontal-alignment: center;
+        }
+    }
+}

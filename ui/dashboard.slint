@@ -1,0 +1,385 @@
+// Dashboard pieces: tiles on the grid and the climate / dimmer pop-ups.
+//
+// Icons come from Material Design Icons (the set Home Assistant uses). Only
+// the glyphs written as string literals in the .slint files are embedded.
+
+import "fonts/MaterialDesignIcons.ttf";
+import { Theme } from "theme.slint";
+import { TileData, ModeItem } from "types.slint";
+import { Button } from "widgets.slint";
+
+export global Icons {
+    out property <string> family: "Material Design Icons";
+
+    pure public function for-tile(kind: string, on: bool, mode: string, domain: string) -> string {
+        if (kind == "light") {
+            return on ? "\u{F0335}" : "\u{F0336}";
+        }
+        if (kind == "gate") {
+            return on ? "\u{F116A}" : "\u{F0299}";
+        }
+        if (kind == "garage") {
+            return on ? "\u{F06DA}" : "\u{F06D9}";
+        }
+        if (kind == "valve") {
+            return on ? "\u{F1068}" : "\u{F1067}";
+        }
+        if (kind == "climate") {
+            return Icons.for-mode(mode);
+        }
+        if (kind == "toggle") {
+            if (domain == "automation") {
+                return on ? "\u{F06A9}" : "\u{F16A7}";
+            }
+            return on ? "\u{F0521}" : "\u{F0A19}";
+        }
+        return "\u{F05D6}";
+    }
+
+    pure public function for-mode(mode: string) -> string {
+        if (mode == "cool") {
+            return "\u{F0717}";
+        }
+        if (mode == "heat") {
+            return "\u{F0238}";
+        }
+        if (mode == "heat_cool") {
+            return "\u{F1A79}";
+        }
+        if (mode == "auto") {
+            return "\u{F006A}";
+        }
+        if (mode == "dry") {
+            return "\u{F058E}";
+        }
+        if (mode == "fan_only") {
+            return "\u{F0210}";
+        }
+        if (mode == "off") {
+            return "\u{F0425}";
+        }
+        return "\u{F001B}";
+    }
+
+    // Accent colour of a tile.
+    pure public function tint(kind: string, mode: string) -> color {
+        if (kind == "light") {
+            return #f5b83d;
+        }
+        if (kind == "valve") {
+            return #22d3ee;
+        }
+        if (kind == "toggle") {
+            return #4ade80;
+        }
+        if (kind == "climate") {
+            if (mode == "heat") {
+                return #fb923c;
+            }
+            if (mode == "cool") {
+                return #38bdf8;
+            }
+            return #a78bfa;
+        }
+        return #60a5fa;
+    }
+}
+
+export component TileView inherits Rectangle {
+    in property <TileData> tile;
+    callback tapped();
+    callback long-pressed();
+
+    property <color> tint: Icons.tint(root.tile.kind, root.tile.mode);
+    property <bool> long-fired: false;
+
+    border-radius: 18px;
+    background: !root.tile.available ? #15181e
+        : ta.pressed ? (root.tile.on ? root.tint.with-alpha(0.34) : Theme.surface-3)
+        : root.tile.on ? root.tint.with-alpha(0.22) : Theme.surface;
+    border-width: root.tile.on && root.tile.available ? 2px : 0px;
+    border-color: root.tint.with-alpha(0.55);
+
+    VerticalLayout {
+        padding: 14px;
+        spacing: 2px;
+        HorizontalLayout {
+            Text {
+                text: Icons.for-tile(root.tile.kind, root.tile.on, root.tile.mode, root.tile.domain);
+                font-family: Icons.family;
+                font-size: 40px;
+                color: !root.tile.available ? Theme.muted : root.tile.on ? root.tint : Theme.text;
+                vertical-alignment: top;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            if root.tile.moving: Rectangle {
+                width: 10px;
+                height: 10px;
+                y: 6px;
+                border-radius: 5px;
+                background: root.tint.with-alpha(0.4 + 0.6 * Math.abs(Math.sin(animation-tick() / 1s * 180deg)));
+            }
+        }
+        Rectangle { vertical-stretch: 1; }
+        // Only where there is room for it.
+        if root.tile.value != "" && root.height >= 180px: Text {
+            text: root.tile.value;
+            font-size: 40px;
+            font-weight: 600;
+            color: root.tile.on && root.tile.available ? root.tint : Theme.text;
+        }
+        Text {
+            text: root.tile.label;
+            font-size: 18px;
+            font-weight: 600;
+            color: root.tile.available ? Theme.text : Theme.muted;
+            overflow: elide;
+        }
+        Text {
+            text: root.tile.detail == "" ? root.tile.status : root.tile.status + " · " + root.tile.detail;
+            font-size: 14px;
+            color: root.tile.on && root.tile.available ? root.tint : Theme.muted;
+            overflow: elide;
+        }
+    }
+
+    ta := TouchArea {
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) {
+                root.long-fired = false;
+            }
+        }
+        clicked => {
+            if (!root.long-fired) {
+                root.tapped();
+            }
+        }
+    }
+    Timer {
+        interval: 600ms;
+        running: ta.pressed && !root.long-fired;
+        triggered => {
+            root.long-fired = true;
+            root.long-pressed();
+        }
+    }
+}
+
+component RoundButton inherits Rectangle {
+    in property <string> glyph;
+    in property <bool> enabled: true;
+    callback clicked();
+    width: 84px;
+    height: 84px;
+    border-radius: 42px;
+    background: !root.enabled ? Theme.surface : ta.pressed ? Theme.surface-3 : Theme.surface-2;
+    Text {
+        text: root.glyph;
+        font-family: Icons.family;
+        font-size: 40px;
+        color: root.enabled ? Theme.text : Theme.muted;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+component Sheet inherits Rectangle {
+    in property <string> title;
+    callback close();
+    background: #000000b8;
+    TouchArea {
+        clicked => { root.close(); }
+    }
+    card := Rectangle {
+        width: 620px;
+        height: 400px;
+        border-radius: 20px;
+        background: Theme.surface;
+        // Swallow taps on the card itself.
+        TouchArea { }
+        Text {
+            x: 28px;
+            y: 22px;
+            width: parent.width - 120px;
+            text: root.title;
+            font-size: 24px;
+            font-weight: 600;
+            color: Theme.text;
+            overflow: elide;
+        }
+        Rectangle {
+            x: parent.width - 76px;
+            y: 12px;
+            width: 60px;
+            height: 60px;
+            border-radius: 30px;
+            background: close-ta.pressed ? Theme.surface-3 : transparent;
+            Text {
+                text: "\u{F0156}";
+                font-family: Icons.family;
+                font-size: 28px;
+                color: Theme.muted;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            close-ta := TouchArea {
+                clicked => { root.close(); }
+            }
+        }
+        Rectangle {
+            y: 80px;
+            height: parent.height - 80px;
+            @children
+        }
+    }
+}
+
+export component ClimateSheet inherits Sheet {
+    in property <string> target; // formatted, e.g. "24.0"
+    in property <string> unit;
+    in property <string> current; // formatted, "" when unknown
+    in property <string> humidity; // whole percent, "" when unknown
+    in property <string> mode;
+    in property <[ModeItem]> modes;
+    in property <bool> can-down;
+    in property <bool> can-up;
+    in property <bool> available;
+    callback step(int);
+    callback set-mode(string);
+
+    VerticalLayout {
+        padding-left: 28px;
+        padding-right: 28px;
+        padding-bottom: 24px;
+        spacing: 18px;
+        HorizontalLayout {
+            alignment: center;
+            spacing: 36px;
+            RoundButton {
+                y: 14px;
+                glyph: "\u{F0374}";
+                enabled: root.available && root.can-down && root.mode != "off";
+                clicked => { root.step(-1); }
+            }
+            VerticalLayout {
+                alignment: center;
+                width: 260px;
+                Text {
+                    text: root.mode == "off" ? "Off" : root.target == "" ? "–" : root.target + root.unit;
+                    font-size: 48px;
+                    font-weight: 600;
+                    color: root.mode == "off" ? Theme.muted : Icons.tint("climate", root.mode);
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: (root.current == "" ? "" : "Now " + root.current + root.unit)
+                        + (root.current != "" && root.humidity != "" ? " · " : "")
+                        + (root.humidity == "" ? "" : root.humidity + "%");
+                    font-size: 18px;
+                    color: Theme.muted;
+                    horizontal-alignment: center;
+                }
+            }
+            RoundButton {
+                y: 14px;
+                glyph: "\u{F0415}";
+                enabled: root.available && root.can-up && root.mode != "off";
+                clicked => { root.step(1); }
+            }
+        }
+        Rectangle { vertical-stretch: 1; }
+        HorizontalLayout {
+            spacing: 10px;
+            alignment: center;
+            for m in root.modes: Rectangle {
+                width: 80px;
+                height: 80px;
+                border-radius: 16px;
+                background: m.id == root.mode ? Icons.tint("climate", m.id).with-alpha(0.25)
+                    : mode-ta.pressed ? Theme.surface-3 : Theme.surface-2;
+                border-width: m.id == root.mode ? 2px : 0px;
+                border-color: Icons.tint("climate", m.id);
+                VerticalLayout {
+                    padding-top: 10px;
+                    padding-bottom: 8px;
+                    spacing: 4px;
+                    Text {
+                        text: Icons.for-mode(m.id);
+                        font-family: Icons.family;
+                        font-size: 28px;
+                        color: m.id == root.mode ? Icons.tint("climate", m.id) : Theme.text;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: m.label;
+                        font-size: 14px;
+                        color: Theme.muted;
+                        horizontal-alignment: center;
+                    }
+                }
+                mode-ta := TouchArea {
+                    enabled: root.available;
+                    clicked => { root.set-mode(m.id); }
+                }
+            }
+        }
+    }
+}
+
+export component DimmerSheet inherits Sheet {
+    in-out property <int> value; // 0-100
+    in property <bool> is-on;
+    callback commit(int);
+    callback toggle();
+
+    VerticalLayout {
+        padding-left: 40px;
+        padding-right: 40px;
+        padding-bottom: 28px;
+        spacing: 28px;
+        Text {
+            text: root.is-on ? root.value + "%" : "Off";
+            font-size: 48px;
+            font-weight: 600;
+            color: root.is-on ? #f5b83d : Theme.muted;
+            horizontal-alignment: center;
+        }
+        track := Rectangle {
+            height: 72px;
+            border-radius: 18px;
+            background: Theme.surface-2;
+            clip: true;
+            Rectangle {
+                x: 0px;
+                width: parent.width * root.value / 100;
+                border-radius: 18px;
+                background: #f5b83d;
+            }
+            TouchArea {
+                function set-from(px: length) {
+                    root.value = Math.round(Math.clamp(px / track.width * 100, 1, 100));
+                }
+                pointer-event(e) => {
+                    if (e.kind == PointerEventKind.down) {
+                        self.set-from(self.mouse-x);
+                    } else if (e.kind == PointerEventKind.up) {
+                        // Commit on release, even if the finger slid off the track.
+                        root.commit(root.value);
+                    }
+                }
+                moved => { self.set-from(self.mouse-x); }
+            }
+        }
+        HorizontalLayout {
+            alignment: center;
+            Button {
+                text: root.is-on ? "Turn off" : "Turn on";
+                clicked => { root.toggle(); }
+            }
+        }
+    }
+}

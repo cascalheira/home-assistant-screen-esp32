@@ -1,0 +1,20 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "ESP32 Screen",
+        "description": "Adds the Screens panel to the sidebar, where you design the layout of each wall screen. Screens appear there after they log in to Home Assistant. Give every screen its own non-admin user."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "ESP32 Screen is already set up. All screens are managed from the Screens panel."
+    }
+  },
+  "entity": {
+    "update": {
+      "firmware": {
+        "name": "Firmware"
+      }
+    }
+  }
+}

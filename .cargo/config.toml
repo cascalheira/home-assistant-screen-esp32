@@ -1,0 +1,18 @@
+[build]
+target = "xtensa-esp32s3-espidf"
+
+[target.xtensa-esp32s3-espidf]
+linker = "ldproxy"
+# The board's CH340 bridge drops packets above 230400 baud through a USB dock.
+# Pick the port with ESPFLASH_PORT=/dev/cu.usbserial-XXXX if several are attached.
+runner = "espflash flash --monitor --baud 230400 --flash-size 16mb --partition-table partitions.csv"
+rustflags = ["--cfg", "espidf_time64"]
+
+[unstable]
+build-std = ["std", "panic_abort"]
+
+[env]
+MCU = "esp32s3"
+ESP_IDF_VERSION = "v5.5.3"
+# Reuse the ESP-IDF checkout and tools in ~/.espressif instead of a per-project copy.
+ESP_IDF_TOOLS_INSTALL_DIR = "global"

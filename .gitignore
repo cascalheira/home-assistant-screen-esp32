@@ -1,0 +1,7 @@
+target/
+.embuild/
+backup/
+homeassistant/dev-config/
+__pycache__/
+dist/
+.claude/

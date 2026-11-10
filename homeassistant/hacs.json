@@ -1,0 +1,5 @@
+{
+  "name": "ESP32 Screen",
+  "homeassistant": "2024.6.0",
+  "render_readme": false
+}

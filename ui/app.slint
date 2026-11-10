@@ -1,0 +1,1051 @@
+// All screens of the 800x480 panel.
+//
+// Rust (src/app.rs) owns the state machine: it sets `page` and feeds every
+// `in` property. The UI switches pages on its own only for pure navigation.
+
+import "fonts/Inter-Regular.ttf";
+import "fonts/Inter-SemiBold.ttf";
+import { Theme } from "theme.slint";
+import { NetworkItem, InstanceItem, PageTab, TileData, ModeItem } from "types.slint";
+import {
+    Button, SignalBars, LoadingDots, Badge, StepChip, Header, NetworkRow, Keyboard, EntryField, InfoRow, Segmented
+} from "widgets.slint";
+import { Icons, TileView, ClimateSheet, DimmerSheet } from "dashboard.slint";
+import { ScreenSaver } from "clock.slint";
+
+export { NetworkItem, InstanceItem, PageTab, TileData, ModeItem }
+
+export enum Page { welcome, networks, entry, connecting, result, ha-find, dashboard, settings }
+
+// A tappable list row with a title and a muted second line.
+component ListRow inherits Rectangle {
+    in property <string> title;
+    in property <string> subtitle;
+    in property <string> glyph;
+    callback clicked();
+    height: 72px;
+    background: ta.pressed ? Theme.surface-2 : transparent;
+    HorizontalLayout {
+        padding-left: 28px;
+        padding-right: 28px;
+        spacing: 18px;
+        Text {
+            text: root.glyph;
+            font-family: Icons.family;
+            font-size: 28px;
+            color: Theme.accent;
+            vertical-alignment: center;
+        }
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            Text {
+                text: root.title;
+                font-size: 20px;
+                color: Theme.text;
+                overflow: elide;
+            }
+            if root.subtitle != "": Text {
+                text: root.subtitle;
+                font-size: 14px;
+                color: Theme.muted;
+                overflow: elide;
+            }
+        }
+        Text {
+            text: "›";
+            font-size: 28px;
+            color: Theme.muted;
+            vertical-alignment: center;
+        }
+    }
+    Rectangle {
+        x: 28px;
+        y: parent.height - 1px;
+        width: parent.width - 56px;
+        height: 1px;
+        background: Theme.line;
+    }
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+component IconButton inherits Rectangle {
+    in property <string> glyph;
+    callback clicked();
+    width: 52px;
+    height: 44px;
+    border-radius: 12px;
+    background: ta.pressed ? Theme.surface-3 : Theme.surface-2;
+    Text {
+        text: root.glyph;
+        font-family: Icons.family;
+        font-size: 24px;
+        color: Theme.text;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+export component AppWindow inherits Window {
+    width: 800px;
+    height: 480px;
+    background: Theme.bg;
+    default-font-family: "Inter";
+    default-font-size: 18px;
+
+    in-out property <Page> page: Page.welcome;
+    in property <string> mac-address;
+
+    // ---- Wi-Fi network list
+    in property <[NetworkItem]> networks;
+    in property <bool> scanning;
+    in property <string> scan-message;
+
+    // ---- Generic text entry (Wi-Fi password, HA address, username, ...)
+    in property <string> entry-title;
+    in property <string> entry-subtitle;
+    in property <string> entry-placeholder;
+    in property <string> entry-enter-label;
+    in property <bool> entry-toggle;
+    in property <string> entry-display;
+    in property <bool> entry-revealed;
+    in property <bool> entry-valid;
+
+    // ---- Progress page
+    in property <string> status-title;
+    in property <string> status-detail;
+    in property <bool> status-retrying;
+    in property <string> status-button; // "" hides the button
+
+    // ---- Result page
+    in property <bool> result-ok;
+    in property <string> result-title;
+    in property <string> result-detail;
+    in property <string> result-primary;
+    in property <string> result-secondary; // "" hides the button
+    in property <bool> result-auto; // press the primary button after 4 s
+
+    // ---- Home Assistant discovery
+    in property <[InstanceItem]> ha-instances;
+    in property <bool> ha-searching;
+
+    // ---- Dashboard
+    in property <[PageTab]> dash-pages;
+    // Not every title fits: other pages with an icon show only the icon.
+    in property <bool> tabs-compact;
+    in-out property <int> dash-page;
+    in property <[TileData]> tiles;
+    in property <int> grid-cols: 4;
+    in property <int> grid-rows: 3;
+    in property <string> dash-status; // "" = all good
+    in property <string> dash-message-title; // shown instead of the grid when set
+    in property <string> dash-message-detail;
+    in property <string> dash-message-button;
+    in-out property <string> toast;
+
+    // ---- Climate pop-up
+    in-out property <bool> climate-open;
+    in property <string> climate-name;
+    in property <string> climate-target;
+    in property <string> climate-current;
+    in property <string> climate-humidity;
+    in property <string> climate-unit;
+    in property <string> climate-mode;
+    in property <[ModeItem]> climate-modes;
+    in property <bool> climate-can-down;
+    in property <bool> climate-can-up;
+    in property <bool> climate-available;
+
+    // ---- Dimmer pop-up
+    in-out property <bool> dimmer-open;
+    in property <string> dimmer-name;
+    in-out property <int> dimmer-value;
+    in property <bool> dimmer-on;
+
+    // ---- Settings
+    in property <bool> wifi-online;
+    in property <string> wifi-ssid;
+    in property <string> ip-address;
+    in property <int> wifi-bars;
+    in property <string> wifi-status;
+    in property <string> ha-url;
+    in property <string> ha-status;
+    in property <string> screen-name;
+    in property <bool> ha-configured;
+    in property <string> sd-status;
+
+    // ---- Firmware update overlay
+    in-out property <bool> updating;
+    in property <string> update-title;
+    in property <string> update-detail;
+    in property <float> update-progress; // 0-1
+    in property <bool> update-failed;
+    in property <string> firmware-version;
+
+    // ---- Screensaver
+    in property <int> saver-mode; // 0 off, 1 clock, 2 flip clock
+    in property <int> saver-delay; // index into the delay options
+    in property <bool> saver-active;
+    in property <int> clock-d0;
+    in property <int> clock-d1;
+    in property <int> clock-d2;
+    in property <int> clock-d3;
+    in property <int> clock-prev0;
+    in property <int> clock-prev1;
+    in property <int> clock-prev2;
+    in property <int> clock-prev3;
+    in property <float> clock-p0: 1;
+    in property <float> clock-p1: 1;
+    in property <float> clock-p2: 1;
+    in property <float> clock-p3: 1;
+    in property <string> clock-date;
+
+    callback start-setup();
+    callback rescan();
+    callback choose-network(NetworkItem);
+    callback choose-hidden();
+    callback key(string);
+    callback backspace();
+    callback toggle-reveal();
+    callback submit-entry();
+    callback entry-back();
+    callback status-action();
+    callback result-primary-clicked();
+    callback result-secondary-clicked();
+    callback ha-search();
+    callback ha-choose(InstanceItem);
+    callback ha-manual();
+    callback ha-find-back();
+    callback page-selected(int);
+    callback tile-tapped(string);
+    callback tile-long-pressed(string);
+    callback dash-message-action();
+    callback climate-step(int);
+    callback climate-set-mode(string);
+    callback dimmer-commit(int);
+    callback dimmer-toggle();
+    callback open-settings();
+    callback change-network();
+    callback forget-network();
+    callback ha-sign-in();
+    callback ha-sign-out();
+    callback saver-mode-picked(int);
+    callback saver-delay-picked(int);
+
+    // Never set. Its only job is to make the glyph embedder include these
+    // characters (Latin-1 for accented names, plus symbols HA sends such as
+    // "°" and "→"); Slint only embeds characters found in string literals,
+    // and drops elements it can prove are never shown.
+    in property <bool> glyph-coverage: false;
+
+    property <bool> confirm-forget: false;
+    property <bool> confirm-sign-out: false;
+
+    if root.glyph-coverage: Text {
+        // Page icons (src/icons.rs), then text characters.
+        text: "\u{F02DC}\u{F04B9}\u{F02E3}\u{F0A70}\u{F0176}\u{F09A0}\u{F1818}\u{F09AB}\u{F1239}\u{F0F91}\u{F0E7D}\u{F128D}\u{F072A}\u{F04CD}\u{F081A}\u{F0DD2}\u{F0D80}\u{F0D81}\u{F0D84}\u{F112B}\u{F1817}\u{F06D9}\u{F010B}\u{F0299}\u{F0531}\u{F024A}\u{F0E66}\u{F0606}\u{F03E9}\u{F01E6}\u{F0502}\u{F075A}\u{F0297}\u{F1253}\u{F0393}\u{F001B}\u{F1A79}\u{F0210}\u{F0238}\u{F0717}\u{F058C}\u{F06A5}\u{F0599}\u{F06A9}\u{F068A}\u{F07AE}¡¢£¤¥¦§¨©ª«¬®¯°±²³´µ¶·¸¹º»¼½¾¿ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ–—‘’“”•→←↑↓…€";
+    }
+
+    // ---- Welcome
+    if root.page == Page.welcome: Rectangle {
+        VerticalLayout {
+            padding: 48px;
+            spacing: 18px;
+            alignment: center;
+            Text {
+                text: "Welcome";
+                font-size: 48px;
+                font-weight: 600;
+                color: Theme.text;
+            }
+            Text {
+                text: "Let's connect this screen to your Wi-Fi network.\nAfter that we'll link it to Home Assistant.";
+                font-size: 20px;
+                color: Theme.muted;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: start;
+                padding-top: 10px;
+                padding-bottom: 18px;
+                StepChip {
+                    number: "1";
+                    label: "Wi-Fi";
+                    active: true;
+                }
+                StepChip {
+                    number: "2";
+                    label: "Home Assistant";
+                }
+            }
+            HorizontalLayout {
+                alignment: start;
+                Button {
+                    text: "Get started";
+                    primary: true;
+                    min-button-width: 220px;
+                    clicked => { root.start-setup(); }
+                }
+            }
+        }
+        Text {
+            x: 48px;
+            y: parent.height - 44px;
+            text: "Device " + root.mac-address;
+            font-size: 14px;
+            color: Theme.muted;
+        }
+    }
+
+    // ---- Wi-Fi network list
+    if root.page == Page.networks: Rectangle {
+        VerticalLayout {
+            Header {
+                title: "Choose your Wi-Fi network";
+                back => {
+                    root.page = root.ha-configured && root.wifi-online ? Page.settings
+                        : root.wifi-online ? Page.ha-find : Page.welcome;
+                }
+                Rectangle {
+                    width: 132px;
+                    y: 14px;
+                    height: 48px;
+                    border-radius: 12px;
+                    background: rescan-ta.pressed ? Theme.surface-3 : Theme.surface-2;
+                    opacity: root.scanning ? 0.5 : 1;
+                    Text {
+                        text: root.scanning ? "Scanning…" : "↻  Scan again";
+                        font-size: 16px;
+                        color: Theme.text;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    rescan-ta := TouchArea {
+                        enabled: !root.scanning;
+                        clicked => { root.rescan(); }
+                    }
+                }
+            }
+            Rectangle {
+                vertical-stretch: 1;
+                if root.networks.length == 0: VerticalLayout {
+                    alignment: center;
+                    spacing: 20px;
+                    if root.scanning: HorizontalLayout {
+                        alignment: center;
+                        LoadingDots { }
+                    }
+                    Text {
+                        text: root.scanning ? "Looking for networks…" : root.scan-message;
+                        font-size: 20px;
+                        color: Theme.muted;
+                        horizontal-alignment: center;
+                    }
+                    if !root.scanning: HorizontalLayout {
+                        alignment: center;
+                        Button {
+                            text: "Enter network name";
+                            clicked => { root.choose-hidden(); }
+                        }
+                    }
+                }
+                if root.networks.length > 0: Flickable {
+                    content-height: list.preferred-height;
+                    list := VerticalLayout {
+                        for item in root.networks: NetworkRow {
+                            item: item;
+                            clicked => { root.choose-network(item); }
+                        }
+                        NetworkRow {
+                            item: { ssid: "Other network…", bars: 0, secure: false };
+                            clicked => { root.choose-hidden(); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- Text entry
+    if root.page == Page.entry: Rectangle {
+        VerticalLayout {
+            Header {
+                title: root.entry-title;
+                subtitle: root.entry-subtitle;
+                back => { root.entry-back(); }
+            }
+            Rectangle {
+                vertical-stretch: 1;
+                EntryField {
+                    x: 24px;
+                    width: parent.width - 48px;
+                    text: root.entry-display;
+                    placeholder: root.entry-placeholder;
+                    show-toggle: root.entry-toggle;
+                    revealed: root.entry-revealed;
+                    toggle => { root.toggle-reveal(); }
+                }
+            }
+            Keyboard {
+                enter-label: root.entry-enter-label;
+                enter-enabled: root.entry-valid;
+                key(k) => { root.key(k); }
+                backspace => { root.backspace(); }
+                enter => { root.submit-entry(); }
+            }
+        }
+    }
+
+    // ---- Progress
+    if root.page == Page.connecting: Rectangle {
+        VerticalLayout {
+            alignment: center;
+            spacing: 22px;
+            padding: 48px;
+            HorizontalLayout {
+                alignment: center;
+                LoadingDots {
+                    tint: root.status-retrying ? Theme.warning : Theme.accent;
+                }
+            }
+            Text {
+                text: root.status-title;
+                font-size: 28px;
+                font-weight: 600;
+                color: Theme.text;
+                horizontal-alignment: center;
+                overflow: elide;
+            }
+            Text {
+                text: root.status-detail;
+                font-size: 18px;
+                color: Theme.muted;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+            if root.status-button != "": HorizontalLayout {
+                alignment: center;
+                padding-top: 12px;
+                Button {
+                    text: root.status-button;
+                    clicked => { root.status-action(); }
+                }
+            }
+        }
+    }
+
+    // ---- Result
+    if root.page == Page.result: Rectangle {
+        VerticalLayout {
+            alignment: center;
+            spacing: 18px;
+            padding: 48px;
+            HorizontalLayout {
+                alignment: center;
+                Badge {
+                    glyph: root.result-ok ? "✓" : "!";
+                    tint: root.result-ok ? Theme.success : Theme.danger;
+                }
+            }
+            Text {
+                text: root.result-title;
+                font-size: 28px;
+                font-weight: 600;
+                color: Theme.text;
+                horizontal-alignment: center;
+            }
+            Text {
+                text: root.result-detail;
+                font-size: 18px;
+                color: Theme.muted;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                alignment: center;
+                spacing: 16px;
+                padding-top: 12px;
+                if root.result-secondary != "": Button {
+                    text: root.result-secondary;
+                    clicked => { root.result-secondary-clicked(); }
+                }
+                Button {
+                    text: root.result-primary;
+                    primary: true;
+                    min-button-width: 200px;
+                    clicked => { root.result-primary-clicked(); }
+                }
+            }
+        }
+        Timer {
+            interval: 4s;
+            running: root.result-auto;
+            triggered => { root.result-primary-clicked(); }
+        }
+    }
+
+    // ---- Home Assistant discovery
+    if root.page == Page.ha-find: Rectangle {
+        VerticalLayout {
+            Header {
+                title: "Connect to Home Assistant";
+                subtitle: "Step 2 of 2 · Home Assistant";
+                back => { root.ha-find-back(); }
+                Rectangle {
+                    width: 132px;
+                    y: 14px;
+                    height: 48px;
+                    border-radius: 12px;
+                    background: search-ta.pressed ? Theme.surface-3 : Theme.surface-2;
+                    opacity: root.ha-searching ? 0.5 : 1;
+                    Text {
+                        text: root.ha-searching ? "Searching…" : "↻  Search again";
+                        font-size: 16px;
+                        color: Theme.text;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    search-ta := TouchArea {
+                        enabled: !root.ha-searching;
+                        clicked => { root.ha-search(); }
+                    }
+                }
+            }
+            Flickable {
+                vertical-stretch: 1;
+                content-height: ha-list.preferred-height;
+                ha-list := VerticalLayout {
+                    if root.ha-searching && root.ha-instances.length == 0: HorizontalLayout {
+                        padding: 28px;
+                        spacing: 18px;
+                        LoadingDots { y: 4px; }
+                        Text {
+                            text: "Looking for Home Assistant on your network…";
+                            font-size: 18px;
+                            color: Theme.muted;
+                        }
+                    }
+                    if !root.ha-searching && root.ha-instances.length == 0: Text {
+                        text: "No Home Assistant found automatically. Enter its address instead.";
+                        font-size: 18px;
+                        color: Theme.muted;
+                        wrap: word-wrap;
+                    }
+                    for inst in root.ha-instances: ListRow {
+                        glyph: "\u{F07D0}";
+                        title: inst.name;
+                        subtitle: inst.url;
+                        clicked => { root.ha-choose(inst); }
+                    }
+                    ListRow {
+                        glyph: "\u{F030C}";
+                        title: "Enter address manually";
+                        subtitle: "For example http://192.168.1.10:8123";
+                        clicked => { root.ha-manual(); }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- Dashboard
+    if root.page == Page.dashboard: Rectangle {
+        // Top bar: page tabs, status, settings. 68 px tall; the grid below
+        // gets 800x412 (docs/protocol.md).
+        Rectangle {
+            height: 68px;
+            y: 0px;
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 10px;
+                spacing: 6px;
+                for p[i] in root.dash-pages: Rectangle {
+                    y: 6px;
+                    height: 56px;
+                    min-width: 64px;
+                    preferred-width: tab-row.preferred-width;
+                    horizontal-stretch: 0;
+                    border-radius: 14px;
+                    background: i == root.dash-page ? Theme.surface-2 : tab-ta.pressed ? Theme.surface : transparent;
+                    tab-row := HorizontalLayout {
+                        padding-left: 18px;
+                        padding-right: 20px;
+                        spacing: 10px;
+                        if p.icon != "": Text {
+                            text: p.icon;
+                            font-family: Icons.family;
+                            font-size: 24px;
+                            color: i == root.dash-page ? Theme.accent : Theme.muted;
+                            vertical-alignment: center;
+                        }
+                        if !(root.tabs-compact && p.icon != "" && i != root.dash-page): Text {
+                            text: p.title;
+                            font-size: 20px;
+                            font-weight: i == root.dash-page ? 600 : 400;
+                            color: i == root.dash-page ? Theme.text : Theme.muted;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                    tab-ta := TouchArea {
+                        clicked => {
+                            root.dash-page = i;
+                            root.page-selected(i);
+                        }
+                    }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                if root.dash-status != "": Rectangle {
+                    y: 16px;
+                    height: 36px;
+                    border-radius: 18px;
+                    background: Theme.warning.with-alpha(0.15);
+                    HorizontalLayout {
+                        padding-left: 14px;
+                        padding-right: 14px;
+                        spacing: 8px;
+                        Text {
+                            text: "\u{F0164}";
+                            font-family: Icons.family;
+                            font-size: 20px;
+                            color: Theme.warning;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: root.dash-status;
+                            font-size: 14px;
+                            color: Theme.warning;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+                // Wi-Fi signal; tapping it opens the settings too.
+                Rectangle {
+                    width: 44px;
+                    Text {
+                        text: !root.wifi-online ? "\u{F092E}"
+                            : root.wifi-bars >= 4 ? "\u{F0928}"
+                            : root.wifi-bars == 3 ? "\u{F0925}"
+                            : root.wifi-bars == 2 ? "\u{F0922}"
+                            : root.wifi-bars == 1 ? "\u{F091F}" : "\u{F092F}";
+                        font-family: Icons.family;
+                        font-size: 28px;
+                        color: root.wifi-online ? Theme.text : Theme.warning;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    TouchArea {
+                        clicked => { root.open-settings(); }
+                    }
+                }
+                IconButton {
+                    y: 10px;
+                    width: 56px;
+                    height: 48px;
+                    glyph: "\u{F0493}";
+                    clicked => { root.open-settings(); }
+                }
+            }
+        }
+
+        // Grid
+        grid := Rectangle {
+            y: 68px;
+            height: parent.height - 68px;
+            property <length> pad: 12px;
+            property <length> gap: 12px;
+            property <length> cell-w: (self.width - 2 * self.pad - (root.grid-cols - 1) * self.gap) / max(root.grid-cols, 1);
+            property <length> cell-h: (self.height - 2 * self.pad - (root.grid-rows - 1) * self.gap) / max(root.grid-rows, 1);
+
+            if root.dash-message-title == "": Rectangle {
+                for t in root.tiles: TileView {
+                    x: grid.pad + t.x * (grid.cell-w + grid.gap);
+                    y: grid.pad + t.y * (grid.cell-h + grid.gap);
+                    width: t.w * grid.cell-w + (t.w - 1) * grid.gap;
+                    height: t.h * grid.cell-h + (t.h - 1) * grid.gap;
+                    tile: t;
+                    tapped => { root.tile-tapped(t.id); }
+                    long-pressed => { root.tile-long-pressed(t.id); }
+                }
+            }
+            if root.dash-message-title != "": VerticalLayout {
+                alignment: center;
+                padding-left: 80px;
+                padding-right: 80px;
+                spacing: 14px;
+                Text {
+                    text: "\u{F07D0}";
+                    font-family: Icons.family;
+                    font-size: 48px;
+                    color: Theme.accent;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: root.dash-message-title;
+                    font-size: 24px;
+                    font-weight: 600;
+                    color: Theme.text;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: root.dash-message-detail;
+                    font-size: 16px;
+                    color: Theme.muted;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+                if root.dash-message-button != "": HorizontalLayout {
+                    alignment: center;
+                    padding-top: 8px;
+                    Button {
+                        text: root.dash-message-button;
+                        primary: true;
+                        clicked => { root.dash-message-action(); }
+                    }
+                }
+            }
+        }
+
+        if root.toast != "": Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: parent.height - 76px;
+            width: min(toast-text.preferred-width + 48px, parent.width - 48px);
+            height: 52px;
+            border-radius: 26px;
+            background: #2b2f38f0;
+            toast-text := Text {
+                text: root.toast;
+                font-size: 16px;
+                color: Theme.text;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+        Timer {
+            interval: 3s;
+            running: root.toast != "";
+            triggered => { root.toast = ""; }
+        }
+
+        if root.climate-open: ClimateSheet {
+            title: root.climate-name;
+            target: root.climate-target;
+            unit: root.climate-unit;
+            current: root.climate-current;
+            humidity: root.climate-humidity;
+            mode: root.climate-mode;
+            modes: root.climate-modes;
+            can-down: root.climate-can-down;
+            can-up: root.climate-can-up;
+            available: root.climate-available;
+            close => { root.climate-open = false; }
+            step(d) => { root.climate-step(d); }
+            set-mode(m) => { root.climate-set-mode(m); }
+        }
+        if root.dimmer-open: DimmerSheet {
+            title: root.dimmer-name;
+            value <=> root.dimmer-value;
+            is-on: root.dimmer-on;
+            close => { root.dimmer-open = false; }
+            commit(v) => { root.dimmer-commit(v); }
+            toggle => { root.dimmer-toggle(); }
+        }
+    }
+
+    // ---- Settings
+    if root.page == Page.settings: Rectangle {
+        VerticalLayout {
+            Header {
+                title: "Settings";
+                subtitle: root.screen-name + " · " + root.mac-address + " · firmware " + root.firmware-version;
+                back => { root.page = Page.dashboard; }
+            }
+            HorizontalLayout {
+                padding-left: 20px;
+                padding-right: 20px;
+                padding-top: 16px;
+                spacing: 20px;
+                vertical-stretch: 1;
+                // Wi-Fi card
+                Rectangle {
+                    border-radius: 16px;
+                    background: Theme.surface;
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 8px;
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Text {
+                                text: "Wi-Fi";
+                                font-size: 20px;
+                                font-weight: 600;
+                                color: Theme.text;
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                            SignalBars {
+                                y: 4px;
+                                bars: root.wifi-online ? root.wifi-bars : 0;
+                                on-color: Theme.success;
+                            }
+                        }
+                        InfoRow {
+                            label: "Network";
+                            value: root.wifi-ssid;
+                        }
+                        InfoRow {
+                            label: "Status";
+                            value: root.wifi-status;
+                        }
+                        InfoRow {
+                            label: "IP address";
+                            value: root.ip-address;
+                        }
+                        Rectangle { vertical-stretch: 1; }
+                        HorizontalLayout {
+                            spacing: 12px;
+                            Button {
+                                text: "Change";
+                                min-button-width: 0px;
+                                clicked => { root.change-network(); }
+                            }
+                            Button {
+                                text: "Forget";
+                                destructive: true;
+                                min-button-width: 0px;
+                                clicked => { root.confirm-forget = true; }
+                            }
+                        }
+                    }
+                }
+                // Home Assistant card
+                Rectangle {
+                    border-radius: 16px;
+                    background: Theme.surface;
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 8px;
+                        Text {
+                            text: "Home Assistant";
+                            font-size: 20px;
+                            font-weight: 600;
+                            color: Theme.text;
+                        }
+                        InfoRow {
+                            label: "Address";
+                            value: root.ha-configured ? root.ha-url : "Not set up";
+                        }
+                        InfoRow {
+                            label: "Status";
+                            value: root.ha-status;
+                        }
+                        InfoRow {
+                            label: "Shown as";
+                            value: root.screen-name;
+                        }
+                        Rectangle { vertical-stretch: 1; }
+                        HorizontalLayout {
+                            spacing: 12px;
+                            if root.ha-configured: Button {
+                                text: "Sign out";
+                                destructive: true;
+                                min-button-width: 0px;
+                                clicked => { root.confirm-sign-out = true; }
+                            }
+                            if !root.ha-configured: Button {
+                                text: "Set up";
+                                primary: true;
+                                min-button-width: 0px;
+                                clicked => { root.ha-sign-in(); }
+                            }
+                        }
+                    }
+                }
+            }
+            // Screensaver card
+            HorizontalLayout {
+                padding-left: 20px;
+                padding-right: 20px;
+                padding-top: 14px;
+                Rectangle {
+                    height: 76px;
+                    border-radius: 16px;
+                    background: Theme.surface;
+                    HorizontalLayout {
+                        padding-left: 18px;
+                        padding-right: 16px;
+                        spacing: 14px;
+                        alignment: space-between;
+                        VerticalLayout {
+                            alignment: center;
+                            Text {
+                                text: "Screensaver";
+                                font-size: 20px;
+                                font-weight: 600;
+                                color: Theme.text;
+                            }
+                            Text {
+                                text: root.saver-mode == 0 ? "Off" : "Starts when idle";
+                                font-size: 14px;
+                                color: Theme.muted;
+                            }
+                        }
+                        Segmented {
+                            y: 16px;
+                            options: ["Off", "Clock", "Flip clock"];
+                            selected: root.saver-mode;
+                            picked(i) => { root.saver-mode-picked(i); }
+                        }
+                        Segmented {
+                            y: 16px;
+                            options: ["1 min", "5 min", "15 min"];
+                            selected: root.saver-delay;
+                            enabled: root.saver-mode != 0;
+                            picked(i) => { root.saver-delay-picked(i); }
+                        }
+                    }
+                }
+            }
+            Text {
+                x: 20px;
+                height: 34px;
+                vertical-alignment: center;
+                text: root.sd-status;
+                font-size: 14px;
+                color: Theme.muted;
+            }
+        }
+
+        if root.confirm-forget || root.confirm-sign-out: Rectangle {
+            background: #000000b0;
+            TouchArea { }
+            Rectangle {
+                width: 500px;
+                height: 230px;
+                border-radius: 16px;
+                background: Theme.surface;
+                VerticalLayout {
+                    padding: 28px;
+                    spacing: 14px;
+                    Text {
+                        text: root.confirm-forget ? "Forget " + root.wifi-ssid + "?" : "Sign out of Home Assistant?";
+                        font-size: 24px;
+                        font-weight: 600;
+                        color: Theme.text;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: root.confirm-forget
+                            ? "The screen disconnects and goes back to the setup wizard."
+                            : "The screen stops showing your devices until you sign in again.";
+                        font-size: 16px;
+                        color: Theme.muted;
+                        wrap: word-wrap;
+                    }
+                    Rectangle { vertical-stretch: 1; }
+                    HorizontalLayout {
+                        spacing: 12px;
+                        alignment: end;
+                        Button {
+                            text: "Cancel";
+                            clicked => {
+                                root.confirm-forget = false;
+                                root.confirm-sign-out = false;
+                            }
+                        }
+                        Button {
+                            text: root.confirm-forget ? "Forget" : "Sign out";
+                            destructive: true;
+                            clicked => {
+                                if (root.confirm-forget) {
+                                    root.confirm-forget = false;
+                                    root.forget-network();
+                                } else {
+                                    root.confirm-sign-out = false;
+                                    root.ha-sign-out();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- Screensaver: above everything. Touches never reach it; Rust
+    // swallows the waking touch.
+    if root.saver-active: ScreenSaver {
+        flip: root.saver-mode == 2;
+        d0: root.clock-d0;
+        prev0: root.clock-prev0;
+        p0: root.clock-p0;
+        d1: root.clock-d1;
+        prev1: root.clock-prev1;
+        p1: root.clock-p1;
+        d2: root.clock-d2;
+        prev2: root.clock-prev2;
+        p2: root.clock-p2;
+        d3: root.clock-d3;
+        prev3: root.clock-prev3;
+        p3: root.clock-p3;
+        date: root.clock-date;
+    }
+
+    // ---- Firmware update: above everything, including the screensaver.
+    if root.updating: Rectangle {
+        background: Theme.bg;
+        TouchArea { }
+        VerticalLayout {
+            alignment: center;
+            padding-left: 120px;
+            padding-right: 120px;
+            spacing: 22px;
+            Text {
+                text: root.update-failed ? "\u{F05D6}" : "\u{F06B0}";
+                font-family: Icons.family;
+                font-size: 48px;
+                color: root.update-failed ? Theme.danger : Theme.accent;
+                horizontal-alignment: center;
+            }
+            Text {
+                text: root.update-title;
+                font-size: 28px;
+                font-weight: 600;
+                color: Theme.text;
+                horizontal-alignment: center;
+            }
+            if !root.update-failed: Rectangle {
+                height: 14px;
+                border-radius: 7px;
+                background: Theme.surface-2;
+                Rectangle {
+                    x: 0px;
+                    width: parent.width * Math.clamp(root.update-progress, 0, 1);
+                    border-radius: 7px;
+                    background: Theme.accent;
+                }
+            }
+            Text {
+                text: root.update-detail;
+                font-size: 18px;
+                color: Theme.muted;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+            if root.update-failed: HorizontalLayout {
+                alignment: center;
+                Button {
+                    text: "Close";
+                    clicked => { root.updating = false; }
+                }
+            }
+        }
+    }
+}

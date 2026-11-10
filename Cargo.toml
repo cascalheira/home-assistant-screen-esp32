@@ -1,0 +1,53 @@
+[package]
+name = "esp32-screen"
+version = "0.4.0"
+edition = "2021"
+rust-version = "1.85"
+publish = false
+
+[[bin]]
+name = "esp32-screen"
+harness = false # no unit test harness on the device
+
+[profile.release]
+opt-level = "s"
+debug = true # symbols stay in the ELF only, they are not flashed
+
+# Slint's software renderer is the hot path: optimize it for speed, not size.
+[profile.release.package.i-slint-renderer-software]
+opt-level = 3
+
+[profile.release.package.i-slint-core]
+opt-level = 3
+
+[profile.dev]
+debug = true
+opt-level = "z"
+
+[dependencies]
+anyhow = "1"
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = { version = "0.10", default-features = false }
+esp-idf-svc = "0.53"
+# Slint's "std" feature drags in system-font loading (memory-mapped files),
+# which ESP-IDF cannot build. The MCU configuration renders only the glyphs
+# embedded at build time; the app itself still uses std.
+slint = { version = "1.18", default-features = false, features = [
+    "compat-1-2",
+    "unsafe-single-threaded",
+    "libm",
+    "renderer-software",
+] }
+
+[build-dependencies]
+embuild = "0.33"
+slint-build = "1.18"
+
+# ESP-IDF components from the Espressif component registry.
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/mdns", version = "^1.4" }
+
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/esp_websocket_client", version = "^1.4" }

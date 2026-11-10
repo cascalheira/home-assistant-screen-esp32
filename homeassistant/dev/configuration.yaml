@@ -1,0 +1,130 @@
+# Development Home Assistant for the esp32_screen integration.
+# dev/run-ha.sh copies this to dev-config/configuration.yaml.
+
+default_config:
+
+# Demo lights, covers (incl. a garage door), valves, climate, switches, a button.
+demo:
+
+logger:
+  default: warning
+  logs:
+    custom_components.esp32_screen: debug
+
+# A gate-like cover, a relay switch, an on/off-only (not dimmable) light,
+# room sensors and automations, which demo does not have.
+input_boolean:
+  front_gate_open:
+    name: Front gate open
+  gate_relay:
+    name: Gate relay state
+  porch_light:
+    name: Porch light state
+  guest_mode:
+    name: Guest mode
+    icon: mdi:account-multiple
+  room_sensor_online:
+    name: Room sensor online
+    initial: true
+
+# Values behind the template room sensors below (for climate tile tests).
+input_number:
+  room_temperature:
+    name: Room temperature value
+    min: -20
+    max: 50
+    step: 0.1
+    initial: 23.4
+    unit_of_measurement: "°C"
+  room_humidity:
+    name: Room humidity value
+    min: 0
+    max: 100
+    step: 0.1
+    initial: 46.6
+    unit_of_measurement: "%"
+  attic_temperature_f:
+    name: Attic temperature value
+    min: -4
+    max: 122
+    step: 0.1
+    initial: 68
+    unit_of_measurement: "°F"
+
+automation:
+  - id: dev_night_lights
+    alias: Night lights
+    triggers:
+      - trigger: time
+        at: "22:00:00"
+    actions:
+      - action: light.turn_on
+        target:
+          entity_id: light.porch_light
+  - id: dev_gate_opened
+    alias: Gate opened
+    triggers:
+      - trigger: state
+        entity_id: cover.front_gate
+        to: open
+    actions:
+      - delay: 0
+
+template:
+  - sensor:
+      - name: Living Room Temperature
+        unique_id: dev_living_room_temperature
+        device_class: temperature
+        state_class: measurement
+        unit_of_measurement: "°C"
+        state: "{{ states('input_number.room_temperature') }}"
+        availability: "{{ is_state('input_boolean.room_sensor_online', 'on') }}"
+      - name: Living Room Humidity
+        unique_id: dev_living_room_humidity
+        device_class: humidity
+        state_class: measurement
+        unit_of_measurement: "%"
+        state: "{{ states('input_number.room_humidity') }}"
+        availability: "{{ is_state('input_boolean.room_sensor_online', 'on') }}"
+      # No device_class on purpose: HA would otherwise convert it to °C itself.
+      - name: Attic Temperature F
+        unique_id: dev_attic_temperature_f
+        unit_of_measurement: "°F"
+        state: "{{ states('input_number.attic_temperature_f') }}"
+  - cover:
+      - name: Front Gate
+        unique_id: dev_front_gate
+        device_class: gate
+        state: "{{ 'open' if is_state('input_boolean.front_gate_open', 'on') else 'closed' }}"
+        open_cover:
+          - action: input_boolean.turn_on
+            target:
+              entity_id: input_boolean.front_gate_open
+        close_cover:
+          - action: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.front_gate_open
+    switch:
+      - name: Gate Relay
+        unique_id: dev_gate_relay
+        state: "{{ is_state('input_boolean.gate_relay', 'on') }}"
+        turn_on:
+          - action: input_boolean.turn_on
+            target:
+              entity_id: input_boolean.gate_relay
+        turn_off:
+          - action: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.gate_relay
+    light:
+      - name: Porch Light
+        unique_id: dev_porch_light
+        state: "{{ is_state('input_boolean.porch_light', 'on') }}"
+        turn_on:
+          - action: input_boolean.turn_on
+            target:
+              entity_id: input_boolean.porch_light
+        turn_off:
+          - action: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.porch_light
