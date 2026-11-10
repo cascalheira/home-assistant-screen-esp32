@@ -16,7 +16,9 @@ use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel, Weak};
 use crate::ha::model::{Layout, Tile, TileState};
 use crate::ha::{self, HaControl, HaHandle, Status};
 use crate::wifi::{self, Command, Connection, FailReason, WifiControl, WifiHandle};
-use crate::{ActionButton, AppWindow, InstanceItem, ModeItem, NetworkItem, Page, PageTab, TileData};
+use crate::{
+    ActionButton, AppWindow, InstanceItem, ModeItem, NetworkItem, Page, PageTab, TileData,
+};
 
 const MAX_SSID_BYTES: usize = 32;
 const MAX_WIFI_PASSWORD: usize = 63;
@@ -116,13 +118,23 @@ struct State {
     sheet_tile: Option<String>,
     sheet_code: String,
     sheet_touched: Option<Instant>,
+
+    /// Notification on screen: its id and when it closes (None = until
+    /// tapped or dismissed).
+    notify_id: Option<String>,
+    notify_until: Option<Instant>,
 }
 
 impl State {
     /// What the action sheet's slider controls for the open tile.
     fn sheet_slider_action(&self) -> Option<&'static str> {
         let id = self.sheet_tile.as_ref()?;
-        let tile = self.layout.pages.iter().flat_map(|p| p.tiles.iter()).find(|t| &t.id == id)?;
+        let tile = self
+            .layout
+            .pages
+            .iter()
+            .flat_map(|p| p.tiles.iter())
+            .find(|t| &t.id == id)?;
         match tile.kind.as_str() {
             "blind" => Some("position"),
             "media" => Some("volume"),
@@ -205,6 +217,8 @@ impl App {
                 sheet_tile: None,
                 sheet_code: String::new(),
                 sheet_touched: None,
+                notify_id: None,
+                notify_until: None,
             }),
         });
 
@@ -256,9 +270,17 @@ impl App {
                     .screen_commands
                     .borrow_mut()
                     .push(crate::saver::ScreenCommand::ClockFormat { portuguese, h24 }),
+                ha::Event::Notify { .. } => {
+                    // Wake the screen (and its backlight) for it.
+                    self.screen_commands
+                        .borrow_mut()
+                        .push(crate::saver::ScreenCommand::Attention);
+                    self.shared.on_ha_event(event);
+                }
                 ha::Event::Status(Status::Connected) => {
                     self.resubscribed.set(true);
-                    self.shared.on_ha_event(ha::Event::Status(Status::Connected));
+                    self.shared
+                        .on_ha_event(ha::Event::Status(Status::Connected));
                 }
                 event => self.shared.on_ha_event(event),
             }
@@ -340,6 +362,7 @@ impl Shared {
 
         // ---- Wi-Fi wizard
         on!(on_start_setup, |s| s.show_networks());
+        on!(on_notify_closed, |s| s.close_notification());
         on!(on_rescan, |s| s.wifi.send(Command::Scan));
         on!(on_choose_network, |s, item| {
             {
@@ -477,7 +500,9 @@ impl Shared {
         on!(on_sheet_slider_commit, |s, value| {
             let (tile, action) = {
                 let st = s.st.borrow();
-                let Some(tile) = st.sheet_tile.clone() else { return };
+                let Some(tile) = st.sheet_tile.clone() else {
+                    return;
+                };
                 (tile, st.sheet_slider_action())
             };
             if let Some(action) = action {
@@ -1011,10 +1036,46 @@ impl Shared {
                 self.refresh_popups();
             }
             ha::Event::ActionFailed(message) => ui.set_toast(message.into()),
-            ha::Event::Info { condition, weather, indoor } => {
+            ha::Event::Info {
+                condition,
+                weather,
+                indoor,
+            } => {
                 ui.set_clock_weather_condition(condition.into());
                 ui.set_clock_weather_temperature(weather.into());
                 ui.set_clock_indoor_temperature(indoor.into());
+            }
+            ha::Event::Notify {
+                id,
+                title,
+                message,
+                image,
+                timeout_secs,
+            } => {
+                log::info!("notification {id}: {title}");
+                match image {
+                    Some(picture) => {
+                        ui.set_notify_image(slint::Image::from_rgb8(picture));
+                        ui.set_notify_has_image(true);
+                    }
+                    None => {
+                        ui.set_notify_image(slint::Image::default());
+                        ui.set_notify_has_image(false);
+                    }
+                }
+                ui.set_notify_title(title.into());
+                ui.set_notify_message(message.into());
+                ui.set_notify_open(true);
+                let mut st = self.st.borrow_mut();
+                st.notify_id = Some(id);
+                st.notify_until =
+                    (timeout_secs > 0).then(|| Instant::now() + Duration::from_secs(timeout_secs));
+            }
+            ha::Event::Dismiss(id) => {
+                let showing = self.st.borrow().notify_id.clone();
+                if showing.is_some_and(|showing| id.is_empty() || showing == id) {
+                    self.close_notification();
+                }
             }
             // Routed to the main loop by App::poll.
             ha::Event::Command(_) | ha::Event::Settings { .. } => {}
@@ -1270,8 +1331,12 @@ impl Shared {
     }
 
     fn sheet_action(&self, action: &str) {
-        let Some(id) = self.st.borrow().sheet_tile.clone() else { return };
-        let Some((tile, state)) = self.find_tile(&id) else { return };
+        let Some(id) = self.st.borrow().sheet_tile.clone() else {
+            return;
+        };
+        let Some((tile, state)) = self.find_tile(&id) else {
+            return;
+        };
         let action: &'static str = match action {
             "open" => "open",
             "close" => "close",
@@ -1304,7 +1369,9 @@ impl Shared {
 
     fn refresh_sheet(&self, ui: &AppWindow) {
         let id = self.st.borrow().sheet_tile.clone();
-        let Some((tile, state)) = id.and_then(|id| self.find_tile(&id)) else { return };
+        let Some((tile, state)) = id.and_then(|id| self.find_tile(&id)) else {
+            return;
+        };
         let button = |id: &str, label: &str, primary: bool| ActionButton {
             id: id.into(),
             label: label.into(),
@@ -1352,7 +1419,11 @@ impl Shared {
                 vec![
                     button("previous", "Previous", false),
                     // "pause" only picks the pause icon; both send play_pause.
-                    button(if state.on { "pause" } else { "play_pause" }, if state.on { "Pause" } else { "Play" }, true),
+                    button(
+                        if state.on { "pause" } else { "play_pause" },
+                        if state.on { "Pause" } else { "Play" },
+                        true,
+                    ),
                     button("next", "Next", false),
                     button("toggle", "Power", false),
                 ],
@@ -1380,7 +1451,11 @@ impl Shared {
             }
         }
         let same = self.sheet_buttons.row_count() == buttons.len()
-            && self.sheet_buttons.iter().zip(&buttons).all(|(a, b)| a == *b);
+            && self
+                .sheet_buttons
+                .iter()
+                .zip(&buttons)
+                .all(|(a, b)| a == *b);
         if !same {
             self.sheet_buttons.set_vec(buttons);
         }
@@ -1416,9 +1491,31 @@ impl Shared {
         self.refresh_popups();
     }
 
-    /// Debounced work: sends a pending temperature, drops stale holds.
+    fn close_notification(&self) {
+        {
+            let mut st = self.st.borrow_mut();
+            st.notify_id = None;
+            st.notify_until = None;
+        }
+        if let Some(ui) = self.ui() {
+            ui.set_notify_open(false);
+            // Free the picture.
+            ui.set_notify_image(slint::Image::default());
+        }
+    }
+
+    /// Debounced work: sends a pending temperature, drops stale holds,
+    /// closes a notification whose time is up.
     fn tick(&self) {
         let now = Instant::now();
+        let expired = self
+            .st
+            .borrow()
+            .notify_until
+            .is_some_and(|until| now >= until);
+        if expired {
+            self.close_notification();
+        }
         let mut send = None;
         let mut refresh = false;
         {

@@ -85,8 +85,14 @@ pub enum ScreenCommand {
     SaverMode(Mode),
     SaverDelay(u32),
     Wake,
+    /// Wake for a notification: like `Wake`, and a backlight turned off
+    /// from Home Assistant comes back on.
+    Attention,
     Sleep,
-    ClockFormat { portuguese: bool, h24: bool },
+    ClockFormat {
+        portuguese: bool,
+        h24: bool,
+    },
 }
 
 pub struct Saver {
@@ -253,6 +259,17 @@ impl Saver {
                     self.stop(ui, backlight);
                 }
             }
+            ScreenCommand::Attention => {
+                self.last_input = Instant::now();
+                if self.brightness == 0 {
+                    self.brightness = self.last_brightness.max(1);
+                    self.save_u8(NVS_BRIGHTNESS, self.brightness);
+                }
+                if self.active {
+                    self.stop(ui, backlight);
+                }
+                self.apply_backlight(backlight);
+            }
             ScreenCommand::Sleep => {
                 if !self.active {
                     self.forced = self.mode == Mode::Off;
@@ -390,7 +407,11 @@ impl Saver {
                 h => h,
             }
         };
-        let first = if !self.h24 && hour < 10 { -1 } else { hour / 10 };
+        let first = if !self.h24 && hour < 10 {
+            -1
+        } else {
+            hour / 10
+        };
         [first, hour % 10, tm.tm_min / 10, tm.tm_min % 10]
     }
 
@@ -490,10 +511,28 @@ pub fn set_timezone(posix_tz: &str) {
     log::info!("timezone set to {posix_tz}");
 }
 
-const DAYS_EN: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const DAYS_EN: [&str; 7] = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+];
 const MONTHS_EN: [&str; 12] = [
-    "January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
-    "November", "December",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
 ];
 const DAYS_PT: [&str; 7] = [
     "Domingo",
@@ -505,13 +544,27 @@ const DAYS_PT: [&str; 7] = [
     "Sábado",
 ];
 const MONTHS_PT: [&str; 12] = [
-    "janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro",
-    "novembro", "dezembro",
+    "janeiro",
+    "fevereiro",
+    "março",
+    "abril",
+    "maio",
+    "junho",
+    "julho",
+    "agosto",
+    "setembro",
+    "outubro",
+    "novembro",
+    "dezembro",
 ];
 
 /// "Tuesday, 10 November" / "Terça-feira, 10 de novembro".
 fn date_text(tm: &sys::tm, portuguese: bool) -> String {
-    let (days, months) = if portuguese { (DAYS_PT, MONTHS_PT) } else { (DAYS_EN, MONTHS_EN) };
+    let (days, months) = if portuguese {
+        (DAYS_PT, MONTHS_PT)
+    } else {
+        (DAYS_EN, MONTHS_EN)
+    };
     let day = days.get(tm.tm_wday as usize).copied().unwrap_or("");
     let month = months.get(tm.tm_mon as usize).copied().unwrap_or("");
     if portuguese {

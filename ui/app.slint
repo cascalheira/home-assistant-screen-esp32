@@ -199,6 +199,13 @@ export component AppWindow inherits Window {
     in property <bool> update-failed;
     in property <string> firmware-version;
 
+    // ---- Notification from Home Assistant (docs/protocol.md section 8)
+    in-out property <bool> notify-open;
+    in property <string> notify-title;
+    in property <string> notify-message;
+    in property <image> notify-image;
+    in property <bool> notify-has-image;
+
     // ---- Screensaver
     in property <int> saver-mode; // 0 off, 1 clock, 2 flip clock
     in property <int> saver-delay; // index into the delay options
@@ -221,6 +228,7 @@ export component AppWindow inherits Window {
     in property <float> clock-p3: 1;
     in property <string> clock-date;
 
+    callback notify-closed();
     callback start-setup();
     callback rescan();
     callback choose-network(NetworkItem);
@@ -1039,6 +1047,74 @@ export component AppWindow inherits Window {
         prev3: root.clock-prev3;
         p3: root.clock-p3;
         date: root.clock-date;
+    }
+
+    // ---- Notification: above the screensaver, so it shows on the clock too.
+    // A tap anywhere closes it.
+    if root.notify-open: Rectangle {
+        background: #000000c0;
+        TouchArea {
+            clicked => {
+                root.notify-open = false;
+                root.notify-closed();
+            }
+        }
+        Rectangle {
+            width: 560px;
+            height: min(notify-layout.preferred-height, parent.height - 24px);
+            border-radius: 18px;
+            background: Theme.surface;
+            notify-layout := VerticalLayout {
+                padding: 20px;
+                spacing: 12px;
+                if root.notify-has-image: Rectangle {
+                    height: 270px;
+                    border-radius: 10px;
+                    clip: true;
+                    background: #000000;
+                    Image {
+                        width: 100%;
+                        height: 100%;
+                        source: root.notify-image;
+                        image-fit: contain;
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 12px;
+                    if !root.notify-has-image: Text {
+                        text: "\u{F009A}";
+                        font-family: Icons.family;
+                        font-size: 28px;
+                        color: Theme.accent;
+                        vertical-alignment: center;
+                        horizontal-stretch: 0;
+                    }
+                    Text {
+                        horizontal-stretch: 1;
+                        horizontal-alignment: left;
+                        text: root.notify-title;
+                        font-size: 24px;
+                        font-weight: 600;
+                        color: Theme.text;
+                        overflow: elide;
+                        vertical-alignment: center;
+                    }
+                }
+                if root.notify-message != "": Text {
+                    text: root.notify-message;
+                    font-size: 18px;
+                    color: Theme.text;
+                    wrap: word-wrap;
+                    overflow: elide;
+                }
+                Text {
+                    text: "Tap to close";
+                    font-size: 14px;
+                    color: Theme.muted;
+                    horizontal-alignment: right;
+                }
+            }
+        }
     }
 
     // ---- Firmware update: above everything, including the screensaver.

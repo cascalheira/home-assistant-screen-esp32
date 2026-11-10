@@ -547,3 +547,11 @@ valid token it is `401`; for an unknown or expired id, `404`.
 
 The screen closes the notification with that `id`, ignoring others. An empty
 `id` closes whatever notification is showing.
+
+### On the screen
+
+The screen wakes (screensaver off, backlight back on if HA turned it off) and
+shows a card with the picture, title and message. A tap anywhere closes it, and
+so do the timeout and `dismiss`. The screen decodes the picture with the JPEG
+decoder in the ESP32-S3's ROM, which reads baseline JPEGs only. If the picture
+can't be downloaded or decoded, or memory is short, the card shows without it.

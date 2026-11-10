@@ -138,25 +138,39 @@ fn screenshot(frame_buffer: usize) {
     let pixels =
         unsafe { core::slice::from_raw_parts(frame_buffer as *const u16, LCD_H_RES * LCD_V_RES) };
 
-    let mut rle = Vec::with_capacity(64 * 1024);
-    let mut i = 0;
-    while i < pixels.len() {
-        let value = pixels[i];
-        let mut run = 1;
-        while run < 255 && i + run < pixels.len() && pixels[i + run] == value {
-            run += 1;
-        }
-        rle.push(run as u8);
-        rle.extend_from_slice(&value.to_le_bytes());
-        i += run;
-    }
+    // Runs as (length, pixel); streamed in two passes so the screenshot
+    // needs no big buffer (PSRAM may be nearly full, e.g. with a
+    // notification picture on screen).
+    let runs = || {
+        let mut i = 0;
+        core::iter::from_fn(move || {
+            let value = *pixels.get(i)?;
+            let mut run = 1;
+            while run < 255 && i + run < pixels.len() && pixels[i + run] == value {
+                run += 1;
+            }
+            i += run;
+            Some((run as u8, value))
+        })
+    };
+    let total = runs().count() * 3;
 
-    let encoded = base64(&rle);
     let mut out = std::io::stdout().lock();
-    let _ = writeln!(out, "\nSHOT-BEGIN {LCD_H_RES} {LCD_V_RES} {}", rle.len());
-    for chunk in encoded.as_bytes().chunks(120) {
-        let _ = out.write_all(chunk);
-        let _ = out.write_all(b"\n");
+    let _ = writeln!(out, "\nSHOT-BEGIN {LCD_H_RES} {LCD_V_RES} {total}");
+    // 30 runs = 90 bytes = one 120-character base64 line without padding.
+    let mut line = [0u8; 90];
+    let mut len = 0;
+    for (run, value) in runs() {
+        line[len] = run;
+        line[len + 1..len + 3].copy_from_slice(&value.to_le_bytes());
+        len += 3;
+        if len == line.len() {
+            let _ = writeln!(out, "{}", base64(&line));
+            len = 0;
+        }
+    }
+    if len > 0 {
+        let _ = writeln!(out, "{}", base64(&line[..len]));
     }
     let _ = writeln!(out, "SHOT-END");
     let _ = out.flush();

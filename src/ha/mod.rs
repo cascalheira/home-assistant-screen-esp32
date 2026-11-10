@@ -95,9 +95,26 @@ pub enum Event {
     /// Backlight/screensaver command from Home Assistant (section 6).
     Command(crate::saver::ScreenCommand),
     /// Clock settings (section 7).
-    Settings { portuguese: bool, h24: bool },
+    Settings {
+        portuguese: bool,
+        h24: bool,
+    },
     /// Weather and indoor temperature for the clock (section 7).
-    Info { condition: String, weather: String, indoor: String },
+    Info {
+        condition: String,
+        weather: String,
+        indoor: String,
+    },
+    /// Show a notification (section 8).
+    Notify {
+        id: String,
+        title: String,
+        message: String,
+        image: Option<Picture>,
+        timeout_secs: u64,
+    },
+    /// Close the notification with this id ("" = whatever is showing).
+    Dismiss(String),
 }
 
 pub struct HaHandle {
@@ -687,9 +704,16 @@ impl Worker {
                 use crate::saver::{Mode, ScreenCommand};
                 let value = &event["value"];
                 let command = match event["command"].as_str().unwrap_or("") {
-                    "brightness" => value.as_u64().map(|v| ScreenCommand::Brightness(v.min(100) as u8)),
-                    "screensaver_mode" => value.as_str().and_then(Mode::parse).map(ScreenCommand::SaverMode),
-                    "screensaver_delay" => value.as_u64().map(|v| ScreenCommand::SaverDelay(v as u32)),
+                    "brightness" => value
+                        .as_u64()
+                        .map(|v| ScreenCommand::Brightness(v.min(100) as u8)),
+                    "screensaver_mode" => value
+                        .as_str()
+                        .and_then(Mode::parse)
+                        .map(ScreenCommand::SaverMode),
+                    "screensaver_delay" => {
+                        value.as_u64().map(|v| ScreenCommand::SaverDelay(v as u32))
+                    }
                     "wake" => Some(ScreenCommand::Wake),
                     "sleep" => Some(ScreenCommand::Sleep),
                     _ => None,
@@ -705,6 +729,43 @@ impl Worker {
                     portuguese: settings["language"].as_str() == Some("pt"),
                     h24: settings["clock_24h"].as_bool().unwrap_or(true),
                 });
+            }
+            Some("notify") => {
+                let text = |key: &str| event[key].as_str().unwrap_or("").to_string();
+                let url = text("image_url");
+                log::info!(
+                    "notification {} received (image: {})",
+                    text("id"),
+                    !url.is_empty()
+                );
+                let image = if url.is_empty() {
+                    None
+                } else {
+                    let base = self
+                        .stored
+                        .as_ref()
+                        .map(|s| s.url.clone())
+                        .unwrap_or_default();
+                    match self.fetch_image(&format!("{base}{url}")) {
+                        Ok(image) => Some(image),
+                        Err(e) => {
+                            log::warn!("notification image: {e:#}");
+                            None
+                        }
+                    }
+                };
+                self.emit(Event::Notify {
+                    id: text("id"),
+                    title: text("title"),
+                    message: text("message"),
+                    image,
+                    timeout_secs: event["timeout"].as_u64().unwrap_or(30),
+                });
+            }
+            Some("dismiss") => {
+                self.emit(Event::Dismiss(
+                    event["id"].as_str().unwrap_or("").to_string(),
+                ));
             }
             Some("info") => {
                 let text = |key: &str| event[key].as_str().unwrap_or("").to_string();
@@ -758,16 +819,16 @@ impl Worker {
         }
     }
 
-    fn download_and_install(
+    /// GET from Home Assistant with the screen's access token, refreshing it
+    /// once if it expired. Returns the open connection with status 200.
+    fn authenticated_get(
         &mut self,
         url: &str,
-        size: usize,
-        sha256: Option<[u8; 32]>,
-    ) -> Result<()> {
+    ) -> Result<esp_idf_svc::http::client::EspHttpConnection> {
         use esp_idf_svc::http::client::{Configuration, EspHttpConnection};
         use esp_idf_svc::http::Method;
         let mut attempt = 0;
-        let mut conn = loop {
+        let conn = loop {
             attempt += 1;
             let token = self.access.clone().unwrap_or_default();
             let mut conn = EspHttpConnection::new(&Configuration {
@@ -793,9 +854,39 @@ impl Worker {
                         &stored.refresh,
                     )?);
                 }
-                status => anyhow::bail!("download failed (HTTP {status})"),
+                status => anyhow::bail!("HTTP {status}"),
             }
         };
+        Ok(conn)
+    }
+
+    /// Downloads a notification image (at most 256 KB) and decodes the JPEG.
+    fn fetch_image(&mut self, url: &str) -> Result<Picture> {
+        use anyhow::Context;
+        let mut conn = self.authenticated_get(url).context("request")?;
+        let mut data = Vec::new();
+        let mut buf = [0u8; 2048];
+        loop {
+            let n = conn.read(&mut buf).context("download")?;
+            if n == 0 {
+                break;
+            }
+            data.extend_from_slice(&buf[..n]);
+            if data.len() > 256 * 1024 {
+                anyhow::bail!("image too large");
+            }
+        }
+        log::info!("notification image: {} bytes", data.len());
+        decode_jpeg(data)
+    }
+
+    fn download_and_install(
+        &mut self,
+        url: &str,
+        size: usize,
+        sha256: Option<[u8; 32]>,
+    ) -> Result<()> {
+        let mut conn = self.authenticated_get(url)?;
         // Progress goes to the screen's UI and, every 5 %, to Home Assistant.
         // (Disjoint field borrows: `conn` is local, the closure only touches
         // the websocket, the id counter and the screen id.)
@@ -874,4 +965,51 @@ impl Worker {
         }
         self.request(msg, Pending::Action);
     }
+}
+
+/// A decoded notification picture, ready for Slint.
+pub type Picture = slint::SharedPixelBuffer<slint::Rgb8Pixel>;
+
+/// Pictures larger than this are refused: PSRAM has room for one picture
+/// of about this size next to the firmware and the frame buffers.
+const MAX_PICTURE_PIXELS: usize = 640 * 400;
+/// PSRAM that must stay free after a picture is decoded.
+const PSRAM_RESERVE: usize = 96 * 1024;
+
+/// Decodes a baseline JPEG with Espressif's esp_jpeg component (TJpgDec from
+/// the chip's ROM: a few KB of working memory, little stack). The pixels go
+/// straight into the buffer the UI will show.
+fn decode_jpeg(mut data: Vec<u8>) -> Result<Picture> {
+    use esp_idf_svc::sys::{esp, jpeg};
+    let mut cfg = jpeg::esp_jpeg_image_cfg_t {
+        indata: data.as_mut_ptr(),
+        indata_size: data.len() as u32,
+        out_format: jpeg::esp_jpeg_image_format_t_JPEG_IMAGE_FORMAT_RGB888,
+        out_scale: jpeg::esp_jpeg_image_scale_t_JPEG_IMAGE_SCALE_0,
+        ..Default::default()
+    };
+    let mut info = jpeg::esp_jpeg_image_output_t::default();
+    esp!(unsafe { jpeg::esp_jpeg_get_image_info(&mut cfg, &mut info) })
+        .map_err(|e| anyhow::anyhow!("not a JPEG the screen can read ({e})"))?;
+    let (width, height) = (info.width as usize, info.height as usize);
+    if width * height > MAX_PICTURE_PIXELS {
+        anyhow::bail!("image too large ({width}x{height})");
+    }
+    // Leave PSRAM for everything else: the firmware runs from PSRAM, so
+    // only a few hundred KB are free to begin with.
+    let needed = width * height * 3;
+    let largest = unsafe {
+        esp_idf_svc::sys::heap_caps_get_largest_free_block(esp_idf_svc::sys::MALLOC_CAP_SPIRAM)
+    };
+    if largest < needed + PSRAM_RESERVE {
+        anyhow::bail!("not enough memory for a {width}x{height} picture ({largest} B free)");
+    }
+    let mut picture = Picture::new(width as u32, height as u32);
+    let out = picture.make_mut_bytes();
+    cfg.outbuf = out.as_mut_ptr();
+    cfg.outbuf_size = out.len() as u32;
+    esp!(unsafe { jpeg::esp_jpeg_decode(&mut cfg, &mut info) })
+        .map_err(|e| anyhow::anyhow!("decoding failed ({e})"))?;
+    log::info!("notification image {width}x{height}");
+    Ok(picture)
 }
