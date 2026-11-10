@@ -560,11 +560,17 @@ export component AppWindow inherits Window {
                             color: Theme.muted;
                         }
                     }
-                    if !root.ha-searching && root.ha-instances.length == 0: Text {
-                        text: "No Home Assistant found automatically. Enter its address instead.";
-                        font-size: 18px;
-                        color: Theme.muted;
-                        wrap: word-wrap;
+                    if !root.ha-searching && root.ha-instances.length == 0: HorizontalLayout {
+                        padding-left: 28px;
+                        padding-right: 28px;
+                        padding-top: 20px;
+                        padding-bottom: 8px;
+                        Text {
+                            text: "No Home Assistant found automatically. Enter its address instead.";
+                            font-size: 18px;
+                            color: Theme.muted;
+                            wrap: word-wrap;
+                        }
                     }
                     for inst in root.ha-instances: ListRow {
                         glyph: "\u{F07D0}";
