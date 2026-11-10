@@ -233,6 +233,7 @@ class Esp32ScreenPanel extends HTMLElement {
     }
     this._renderScreens();
     this._renderHead();
+    this._renderSettings();
   }
 
   _loadScreen(screenId, keepPage = false) {
@@ -456,13 +457,88 @@ class Esp32ScreenPanel extends HTMLElement {
           <div class="device-wrap" id="device-wrap"></div>
           <aside class="side" id="side"></aside>
         </div>
-      </div>`;
+      </div>
+      <div class="card settings" id="settings"></div>`;
     this._renderHead();
+    this._renderSettings();
     this._renderError();
     this._renderTabs();
     this._renderPagebar();
     this._renderDevice();
     this._renderSide();
+  }
+
+  _renderSettings() {
+    const el = this.shadowRoot.getElementById("settings");
+    const screen = this._screen();
+    if (!el || !screen) return;
+    // Do not rebuild while the user is in one of the controls.
+    if (el.contains(this.shadowRoot.activeElement)) return;
+    const pending = !this._screens.includes(screen);
+    const st = screen.settings || { weather_entity: "", indoor_temperature_entity: "", language: "en", clock_24h: true };
+    const states = Object.values(this._hass.states);
+    const label = (s) => {
+      const unit = s.attributes.unit_of_measurement || s.attributes.temperature_unit || "";
+      const value = s.entity_id.startsWith("weather.") ? `${s.state}${s.attributes.temperature != null ? `, ${s.attributes.temperature} ${unit}` : ""}` : `${s.state}${unit ? ` ${unit}` : ""}`;
+      return `${s.attributes.friendly_name || s.entity_id} (${value})`;
+    };
+    const byName = (a, b) => (a.attributes.friendly_name || a.entity_id).localeCompare(b.attributes.friendly_name || b.entity_id);
+    const options = (list, current) => {
+      const missing = current && !this._hass.states[current] ? `<option value="${esc(current)}" selected>${esc(current)} (not found)</option>` : "";
+      return missing + list.map((s) => `<option value="${esc(s.entity_id)}" ${s.entity_id === current ? "selected" : ""}>${esc(label(s))}</option>`).join("");
+    };
+    const weather = states.filter((s) => s.entity_id.startsWith("weather.")).sort(byName);
+    const sensors = states.filter((s) => s.entity_id.startsWith("sensor.")).sort(byName);
+    const isTemp = (s) => s.attributes.device_class === "temperature" || (!s.attributes.device_class && ["°C", "°F", "K"].includes(s.attributes.unit_of_measurement));
+    const html = `
+      <div class="settings-head">
+        <div class="side-title">Screen settings</div>
+        <span class="muted">${pending ? "Save a layout first; settings belong to a screen HA knows." : this._settingsNotice ? esc(this._settingsNotice) : "Applied right away. Used by the clock screensaver."}</span>
+      </div>
+      <div class="settings-grid">
+        <label class="field">Weather
+          <select data-change="setting-weather_entity" ${pending ? "disabled" : ""}>
+            <option value="" ${st.weather_entity ? "" : "selected"}>None</option>
+            ${options(weather, st.weather_entity)}
+          </select>
+        </label>
+        <label class="field">Indoor temperature
+          <select data-change="setting-indoor_temperature_entity" ${pending ? "disabled" : ""}>
+            <option value="" ${st.indoor_temperature_entity ? "" : "selected"}>None</option>
+            <optgroup label="Temperature sensors">${options(sensors.filter(isTemp), st.indoor_temperature_entity)}</optgroup>
+            <optgroup label="Other sensors">${options(sensors.filter((s) => !isTemp(s)), st.indoor_temperature_entity)}</optgroup>
+          </select>
+        </label>
+        <label class="field">Language
+          <select data-change="setting-language" ${pending ? "disabled" : ""}>
+            <option value="en" ${st.language === "en" ? "selected" : ""}>English</option>
+            <option value="pt" ${st.language === "pt" ? "selected" : ""}>Português</option>
+          </select>
+        </label>
+        <label class="field check">
+          <span>Clock</span>
+          <span class="check-row"><input type="checkbox" data-change="setting-clock_24h" ${st.clock_24h ? "checked" : ""} ${pending ? "disabled" : ""}> 24-hour</span>
+        </label>
+      </div>`;
+    if (el._html === html) return;
+    el._html = html;
+    el.innerHTML = html;
+  }
+
+  async _saveSetting(key, value) {
+    const screen = this._screen();
+    if (!screen) return;
+    try {
+      await this._hass.connection.sendMessagePromise({ type: "esp32_screen/screen/update", screen_id: screen.screen_id, settings: { [key]: value } });
+      this._settingsNotice = "Saved";
+      this._error = null;
+    } catch (err) {
+      this._error = err.message || String(err);
+      this._settingsNotice = null;
+    }
+    this._renderError();
+    this.shadowRoot.activeElement?.blur?.();
+    this._renderSettings();
   }
 
   _renderHead() {
@@ -984,6 +1060,11 @@ class Esp32ScreenPanel extends HTMLElement {
   _onChange(e) {
     const key = e.target.dataset.change;
     if (!key) return;
+    if (key.startsWith("setting-")) {
+      const name = key.slice(8);
+      this._saveSetting(name, name === "clock_24h" ? e.target.checked : e.target.value);
+      return;
+    }
     const page = this._page();
     if (!page) return;
     const n = Number(e.target.value);
@@ -1398,6 +1479,11 @@ const STYLE = `
   .ghost.invalid::after { border-color: #e53935; background: rgba(229,57,53,.2); }
   .hint { font-size: 13px; margin-top: 8px; }
   #error:empty { display: none; }
+  .settings { display: flex; flex-direction: column; gap: 12px; }
+  .settings-head { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+  .settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; align-items: end; }
+  .field.check .check-row { display: flex; align-items: center; gap: 6px; height: 36px; font-size: 14px; color: var(--primary-text-color); }
+  .field.check input { width: 18px; height: 18px; }
   .side p { margin: 0; line-height: 1.4; }
   .side { display: flex; flex-direction: column; gap: 12px; border-left: 1px solid var(--line); padding-left: 16px; min-width: 0; }
   .side-title { font-weight: 500; font-size: 16px; }

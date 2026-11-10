@@ -47,12 +47,13 @@ from .const import (
     KIND_TOGGLE,
     MANUFACTURER,
     SENSOR_FIELDS,
+    default_settings,
     STORAGE_KEY,
     STORAGE_VERSION,
 )
 from .firmware import FirmwareImage, FirmwareStore
 from .layout import empty_layout, iter_tiles, upgrade_layout
-from .view_model import resolve_label, tile_view_model
+from .view_model import info_payload, resolve_label, tile_view_model
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -81,6 +82,7 @@ class ScreenRecord:
     sw_version: str | None = None
     last_seen: str | None = None
     layout: dict[str, Any] = field(default_factory=empty_layout)
+    settings: dict[str, Any] = field(default_factory=default_settings)
 
     def as_storage(self) -> dict[str, Any]:
         """Serialize for the store."""
@@ -91,6 +93,7 @@ class ScreenRecord:
             "sw_version": self.sw_version,
             "last_seen": self.last_seen,
             "layout": self.layout,
+            "settings": self.settings,
         }
 
     @classmethod
@@ -104,6 +107,7 @@ class ScreenRecord:
             sw_version=data.get("sw_version"),
             last_seen=data.get("last_seen"),
             layout=upgrade_layout(data.get("layout") or empty_layout()),
+            settings={**default_settings(), **(data.get("settings") or {})},
         )
 
 
@@ -135,6 +139,8 @@ class ScreenSubscription:
         self._tiles_by_entity: dict[str, list[dict[str, Any]]] = {}
         self._unsub_track: CALLBACK_TYPE | None = None
         self._unsub_timer: CALLBACK_TYPE | None = None
+        self._unsub_info: CALLBACK_TYPE | None = None
+        self._info: dict[str, Any] | None = None
 
     @callback
     def start(self) -> None:
@@ -150,6 +156,9 @@ class ScreenSubscription:
         if self._unsub_timer is not None:
             self._unsub_timer()
             self._unsub_timer = None
+        if self._unsub_info is not None:
+            self._unsub_info()
+            self._unsub_info = None
 
     @callback
     def send_full(self) -> None:
@@ -188,6 +197,50 @@ class ScreenSubscription:
             self._unsub_timer = async_track_time_interval(
                 self.hass, self._refresh_relative, RELATIVE_TIME_REFRESH
             )
+        self.send_settings()
+
+    @callback
+    def send_settings(self) -> None:
+        """Send `settings` and `info`, and (re)track the info entities."""
+        if self._unsub_info is not None:
+            self._unsub_info()
+            self._unsub_info = None
+        record = self.manager.screens.get(self.screen_id)
+        settings = record.settings if record else default_settings()
+        self.connection.send_event(
+            self.msg_id,
+            {
+                "kind": "settings",
+                "settings": {
+                    "language": settings["language"],
+                    "clock_24h": settings["clock_24h"],
+                },
+            },
+        )
+        self._info = None
+        self._push_info()
+        entities = [
+            e
+            for e in (settings["weather_entity"], settings["indoor_temperature_entity"])
+            if e
+        ]
+        if entities:
+            self._unsub_info = async_track_state_change_event(
+                self.hass, entities, self._info_changed
+            )
+
+    @callback
+    def _info_changed(self, _event: Event[EventStateChangedData]) -> None:
+        self._push_info()
+
+    @callback
+    def _push_info(self) -> None:
+        record = self.manager.screens.get(self.screen_id)
+        settings = record.settings if record else default_settings()
+        info = info_payload(self.hass, settings)
+        if info != self._info:
+            self._info = info
+            self.connection.send_event(self.msg_id, {"kind": "info", **info})
 
     @callback
     def _refresh_relative(self, _now: datetime) -> None:
@@ -444,6 +497,7 @@ class ScreenManager:
                 "online": self.is_online(rec.screen_id),
                 "last_seen": rec.last_seen,
                 "layout": rec.layout,
+                "settings": rec.settings,
             }
             for rec in sorted(self.screens.values(), key=lambda r: r.name.lower())
         ]
@@ -530,6 +584,17 @@ class ScreenManager:
         for sub in list(self._subscriptions.get(screen_id, ())):
             sub.send_full()
         self._notify()
+
+    async def async_update_settings(self, screen_id: str, changes: dict[str, Any]) -> bool:
+        """Change a screen's settings. Returns False when unknown."""
+        if (record := self.screens.get(screen_id)) is None:
+            return False
+        record.settings = {**record.settings, **changes}
+        await self.async_save_now()
+        for sub in list(self._subscriptions.get(screen_id, ())):
+            sub.send_settings()
+        self._notify()
+        return True
 
     async def async_rename(self, screen_id: str, name: str) -> bool:
         """Rename a screen. Returns False when unknown."""

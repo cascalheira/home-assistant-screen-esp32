@@ -144,6 +144,9 @@ and streams tile states to the screens. The contract with the firmware is
    add the screen by its MAC address. Pick a page (up to 6, 1-8 × 1-6 cells),
    click an empty cell to add a tile, drag tiles to move them, drag the corner
    to resize, then press **Save**. Connected screens update right away.
+   Under **Screen settings**, pick a weather entity and an indoor temperature
+   sensor for the clock screensaver, the language (English or Portuguese) and
+   12- or 24-hour time.
    Tile kinds are light, gate, garage, valve, climate, toggle, scene, sensor,
    blind, lock, alarm and media. A toggle tile enables or disables an automation,
    or switches an input_boolean or switch. A scene tile runs a scene, script or

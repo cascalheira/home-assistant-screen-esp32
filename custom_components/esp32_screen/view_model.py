@@ -400,3 +400,25 @@ def _climate(
         detail = f"{detail} · {vm['humidity']}%" if detail else f"{vm['humidity']}%"
     vm["detail"] = detail
     return vm
+
+
+def info_payload(hass: HomeAssistant, settings: dict[str, Any]) -> dict[str, str]:
+    """The `info` event fields for the clock (docs/protocol.md, section 7)."""
+    condition = temperature = indoor = ""
+    if (weather := settings.get("weather_entity")) and (
+        state := hass.states.get(weather)
+    ) is not None and state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+        condition = state.state
+        value = _float(state.attributes.get("temperature"))
+        if value is not None:
+            unit = state.attributes.get("temperature_unit") or hass.config.units.temperature_unit
+            temperature = f"{round(value)} {unit}"
+    if sensor := settings.get("indoor_temperature_entity"):
+        value = _sensor_temperature(hass, sensor)
+        if value is not None:
+            indoor = f"{value:.1f} {hass.config.units.temperature_unit}"
+    return {
+        "weather_condition": condition,
+        "weather_temperature": temperature,
+        "indoor_temperature": indoor,
+    }

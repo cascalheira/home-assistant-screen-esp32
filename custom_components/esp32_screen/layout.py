@@ -21,7 +21,8 @@ from .const import (
 )
 
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
-_ENTITY_ID_RE = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
+ENTITY_ID_RE = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
+_ENTITY_ID_RE = ENTITY_ID_RE
 
 
 class LayoutError(ValueError):

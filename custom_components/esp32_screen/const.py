@@ -115,3 +115,16 @@ OTA_STATES: Final = ("downloading", "verifying", "restarting", "failed")
 # Screen controls (docs/protocol.md, section 6).
 SCREENSAVER_MODES: Final = ("off", "clock", "flip")
 COMMANDS: Final = ("brightness", "screensaver_mode", "screensaver_delay", "wake", "sleep")
+
+# Per-screen settings (docs/protocol.md, section 7).
+LANGUAGES: Final = ("en", "pt")
+
+
+def default_settings() -> dict[str, object]:
+    """Settings of a screen nobody configured yet."""
+    return {
+        "weather_entity": "",
+        "indoor_temperature_entity": "",
+        "language": "en",
+        "clock_24h": True,
+    }

@@ -132,6 +132,79 @@ async def control_tests(admin: HAWebSocket, sim: ScreenSim) -> None:
     await sim.report_state(brightness=80, screensaver_mode="clock", screensaver_delay=300, screensaver_active=False)
 
 
+async def settings_tests(admin: HAWebSocket, sim: ScreenSim) -> None:
+    """Section 7: settings and info events, editor settings, entity tracking."""
+    after_subscribe = [e["kind"] for e in sim.events[:4]]
+    check(after_subscribe == ["layout", "states", "settings", "info"], "subscribe sends layout, states, settings, info", str(after_subscribe))
+    check(sim.events[2] == {"kind": "settings", "settings": {"language": "en", "clock_24h": True}}
+          and sim.events[3] == {"kind": "info", "weather_condition": "", "weather_temperature": "", "indoor_temperature": ""},
+          "defaults: en, 24 h clock, no info", f"{sim.events[2]} {sim.events[3]}")
+
+    mark = sim.mark()
+    await admin.call("esp32_screen/screen/update", screen_id=SIM_ID, settings={
+        "weather_entity": "weather.demo_weather_south",
+        "indoor_temperature_entity": "sensor.living_room_temperature",
+        "language": "pt", "clock_24h": False,
+    })
+    try:
+        settings = await sim.wait_for(lambda e: e.get("kind") == "settings", 5, since=mark)
+        info = await sim.wait_for(lambda e: e.get("kind") == "info", 5, since=mark)
+        check(settings["settings"] == {"language": "pt", "clock_24h": False}, "changing settings sends a settings event", str(settings))
+        check(info == {"kind": "info", "weather_condition": "sunny", "weather_temperature": "22 °C", "indoor_temperature": "23.4 °C"},
+              "info event with weather and indoor temperature", str(info))
+    except TimeoutError:
+        check(False, "changing settings sends settings + info events", str(sim.events[mark:]))
+    kinds = [e["kind"] for e in sim.events[mark:]]
+    check("layout" not in kinds, "a settings change does not resend the layout", str(kinds))
+    stored = next(s_ for s_ in (await admin.call("esp32_screen/screens"))["screens"] if s_["screen_id"] == SIM_ID)
+    check(stored["settings"] == {"weather_entity": "weather.demo_weather_south", "indoor_temperature_entity": "sensor.living_room_temperature",
+                                 "language": "pt", "clock_24h": False}, "settings stored with the screen record", str(stored["settings"]))
+
+    mark = sim.mark()
+    await admin.call("call_service", domain="input_number", service="set_value",
+                     target={"entity_id": "input_number.room_temperature"}, service_data={"value": 24.6})
+    try:
+        info = await sim.wait_for(lambda e: e.get("kind") == "info", 5, since=mark)
+        check(info["indoor_temperature"] == "24.6 °C" and info["weather_condition"] == "sunny",
+              "indoor sensor change -> new info event", str(info))
+    except TimeoutError:
+        check(False, "indoor sensor change -> new info event", "no info event")
+    mark = sim.mark()
+    await admin.call("call_service", domain="light", service="toggle", target={"entity_id": "light.bed_light"}, service_data={})
+    await asyncio.sleep(0.5)
+    check(not any(e.get("kind") == "info" for e in sim.events[mark:]), "unrelated changes send no info event")
+    await admin.call("call_service", domain="light", service="toggle", target={"entity_id": "light.bed_light"}, service_data={})
+
+    mark = sim.mark()
+    await admin.call("call_service", domain="input_boolean", service="turn_off",
+                     target={"entity_id": "input_boolean.room_sensor_online"}, service_data={})
+    try:
+        info = await sim.wait_for(lambda e: e.get("kind") == "info", 5, since=mark)
+        check(info["indoor_temperature"] == "", "unavailable indoor sensor -> \"\"", str(info))
+    except TimeoutError:
+        check(False, "unavailable indoor sensor -> \"\"", "no info event")
+    for service, entity, data in (("turn_on", "input_boolean.room_sensor_online", {}),):
+        await admin.call("call_service", domain="input_boolean", service=service, target={"entity_id": entity}, service_data=data)
+    await admin.call("call_service", domain="input_number", service="set_value",
+                     target={"entity_id": "input_number.room_temperature"}, service_data={"value": 23.4})
+
+    await expect_error(admin.call("esp32_screen/screen/update", screen_id=SIM_ID, settings={"weather_entity": "sensor.outside_temperature"}),
+                       "invalid_format", "settings: weather_entity must be weather.*")
+    await expect_error(admin.call("esp32_screen/screen/update", screen_id=SIM_ID, settings={"language": "de"}),
+                       "invalid_format", "settings: unknown language")
+    await expect_error(sim.ws.call("esp32_screen/screen/update", screen_id=SIM_ID, settings={"language": "en"}),
+                       "unauthorized", "settings: non-admin rejected")
+    mark = sim.mark()
+    await admin.call("esp32_screen/screen/update", screen_id=SIM_ID, settings={"weather_entity": "", "indoor_temperature_entity": "",
+                                                                               "language": "en", "clock_24h": True})
+    try:
+        info = await sim.wait_for(lambda e: e.get("kind") == "info", 5, since=mark)
+        check(info == {"kind": "info", "weather_condition": "", "weather_temperature": "", "indoor_temperature": ""},
+              "clearing the entities -> empty info", str(info))
+    except TimeoutError:
+        check(False, "clearing the entities -> empty info", "no info event")
+
+
 async def firmware_tests(
     admin: HAWebSocket, sim: ScreenSim, firmware_dir: Path, session: aiohttp.ClientSession, url: str
 ) -> None:
@@ -819,6 +892,9 @@ async def main() -> int:
 
         # ---- screen controls as entities (section 6) -----------------------------------------
         await control_tests(admin, sim)
+
+        # ---- clock info and per-screen settings (section 7) -----------------------------------
+        await settings_tests(admin, sim)
 
         # ---- firmware updates (section 5) -------------------------------------------------------
         await firmware_tests(admin, sim, firmware_dir, session, url)

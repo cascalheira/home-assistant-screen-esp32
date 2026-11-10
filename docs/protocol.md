@@ -282,9 +282,9 @@ Result: `null` on success. Errors use HA's standard error result with codes
 
 | command | payload | result |
 |---|---|---|
-| `esp32_screen/screens` | — | `{"screens":[{"screen_id","name","model","sw_version","online","last_seen","layout"}]}` (`last_seen` ISO 8601 or null) |
+| `esp32_screen/screens` | — | `{"screens":[{"screen_id","name","model","sw_version","online","last_seen","layout","settings"}]}` (`last_seen` ISO 8601 or null) |
 | `esp32_screen/layout/save` | `screen_id`, `layout` | `null`; error `invalid_layout` with a readable message |
-| `esp32_screen/screen/update` | `screen_id`, `name` | `null`; `not_found` for unknown screens |
+| `esp32_screen/screen/update` | `screen_id`, optional `name`, optional `settings` (section 7) | `null`; `not_found` for unknown screens |
 | `esp32_screen/screen/remove` | `screen_id` | `null`; `not_found` for unknown screens |
 | `esp32_screen/subscribe_screens` | — | `null`, then an event `{"screens":[...]}` right away and again whenever any screen record or online state changes |
 
@@ -432,3 +432,48 @@ without a brightness sends the last brightness above 0 (100 if none is known).
   `invalid_format`.
 - **Disconnect.** When the screen's last subscription closes, HA forgets the
   reported state.
+
+## 7. Clock info and per-screen settings
+
+Each screen record has settings, edited in the Screens panel. They are stored
+with the screen, not in the layout:
+
+| setting | values | default |
+|---|---|---|
+| `weather_entity` | `""` or a `weather.*` entity | `""` |
+| `indoor_temperature_entity` | `""` or a `sensor.*` entity | `""` |
+| `language` | `"en"`, `"pt"` | `"en"` |
+| `clock_24h` | bool | `true` |
+
+### Events on the screen's subscription
+
+After `layout` and `states`, the subscription sends `settings`, then `info`:
+
+```jsonc
+{"kind":"settings","settings":{"language":"en","clock_24h":true}}
+{"kind":"info","weather_condition":"sunny","weather_temperature":"22 °C",
+ "indoor_temperature":"22.3 °C"}
+```
+
+- **Order.** Every `layout` is followed by `states`, `settings` and `info`.
+  Changing the settings sends `settings` and `info` again without a new
+  `layout`.
+- **`weather_condition`.** The weather entity's state, which is HA's condition
+  name (`sunny`, `cloudy`, `partlycloudy`, `rainy`, `pouring`,
+  `lightning-rainy`, `snowy`, `fog`, `windy`, `clear-night`, `exceptional`
+  and so on).
+- **`weather_temperature`.** The weather entity's temperature rounded to a whole
+  number, with its unit.
+- **`indoor_temperature`.** The sensor's value in HA's temperature unit with one
+  decimal, converted from °F/K if needed.
+- **Empty values.** Each field is `""` when its entity is not configured,
+  missing, unavailable or unknown.
+- **When `info` is sent.** HA tracks the configured entities and sends `info`
+  only when one of the three strings changes.
+
+### Editor command
+
+`esp32_screen/screen/update` (admin only) takes `settings`, a partial object of
+the table above, as well as `name`. Both are optional. A value outside the
+rules fails with `invalid_format`. The `screens` result includes each screen's
+`settings`.

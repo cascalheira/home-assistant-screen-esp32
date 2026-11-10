@@ -20,8 +20,9 @@ from .const import (
     OTA_STATES,
     SCREEN_ID_PATTERN,
     SCREENSAVER_MODES,
+    LANGUAGES,
 )
-from .layout import LayoutError, validate_layout
+from .layout import ENTITY_ID_RE, LayoutError, validate_layout
 from .manager import ActionError, ScreenManager
 
 SCREEN_ID = vol.All(str, vol.Match(SCREEN_ID_PATTERN, msg="screen_id must be 12 upper-case hex digits"))
@@ -275,11 +276,33 @@ async def ws_save_layout(
     connection.send_result(msg["id"])
 
 
+def _entity_of(domain: str) -> Any:
+    def validate(value: Any) -> str:
+        if value is None or value == "":
+            return ""
+        if not isinstance(value, str) or not ENTITY_ID_RE.match(value) or not value.startswith(f"{domain}."):
+            raise vol.Invalid(f"must be \"\" or a {domain}.* entity id")
+        return value
+
+    return validate
+
+
+SETTINGS_SCHEMA = vol.Schema(
+    {
+        vol.Optional("weather_entity"): _entity_of("weather"),
+        vol.Optional("indoor_temperature_entity"): _entity_of("sensor"),
+        vol.Optional("language"): vol.In(LANGUAGES),
+        vol.Optional("clock_24h"): bool,
+    }
+)
+
+
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "esp32_screen/screen/update",
         vol.Required("screen_id"): SCREEN_ID,
-        vol.Required("name"): NAME,
+        vol.Optional("name"): NAME,
+        vol.Optional("settings"): SETTINGS_SCHEMA,
     }
 )
 @websocket_api.require_admin
@@ -287,14 +310,19 @@ async def ws_save_layout(
 async def ws_update_screen(
     hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
 ) -> None:
-    """Rename a screen."""
+    """Rename a screen and/or change its settings."""
     if (manager := _manager(hass, connection, msg)) is None:
         return
-    if not await manager.async_rename(msg["screen_id"], msg["name"]):
+    screen_id = msg["screen_id"]
+    if screen_id not in manager.screens:
         connection.send_error(
-            msg["id"], websocket_api.ERR_NOT_FOUND, f"Unknown screen {msg['screen_id']}"
+            msg["id"], websocket_api.ERR_NOT_FOUND, f"Unknown screen {screen_id}"
         )
         return
+    if "name" in msg:
+        await manager.async_rename(screen_id, msg["name"])
+    if msg.get("settings"):
+        await manager.async_update_settings(screen_id, msg["settings"])
     connection.send_result(msg["id"])
 
 
