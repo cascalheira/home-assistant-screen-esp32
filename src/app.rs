@@ -16,7 +16,7 @@ use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel, Weak};
 use crate::ha::model::{Layout, Tile, TileState};
 use crate::ha::{self, HaControl, HaHandle, Status};
 use crate::wifi::{self, Command, Connection, FailReason, WifiControl, WifiHandle};
-use crate::{AppWindow, InstanceItem, ModeItem, NetworkItem, Page, PageTab, TileData};
+use crate::{ActionButton, AppWindow, InstanceItem, ModeItem, NetworkItem, Page, PageTab, TileData};
 
 const MAX_SSID_BYTES: usize = 32;
 const MAX_WIFI_PASSWORD: usize = 63;
@@ -111,6 +111,24 @@ struct State {
     pending_target: Option<(f64, Option<Instant>, Instant)>,
     dimmer_tile: Option<String>,
     dimmer_touched: Option<Instant>,
+    /// Tile shown in the action sheet (blind, lock, alarm, media) and the
+    /// code typed on its keypad.
+    sheet_tile: Option<String>,
+    sheet_code: String,
+    sheet_touched: Option<Instant>,
+}
+
+impl State {
+    /// What the action sheet's slider controls for the open tile.
+    fn sheet_slider_action(&self) -> Option<&'static str> {
+        let id = self.sheet_tile.as_ref()?;
+        let tile = self.layout.pages.iter().flat_map(|p| p.tiles.iter()).find(|t| &t.id == id)?;
+        match tile.kind.as_str() {
+            "blind" => Some("position"),
+            "media" => Some("volume"),
+            _ => None,
+        }
+    }
 }
 
 pub struct App {
@@ -129,6 +147,7 @@ struct Shared {
     pages: Rc<VecModel<PageTab>>,
     tiles: Rc<VecModel<TileData>>,
     modes: Rc<VecModel<ModeItem>>,
+    sheet_buttons: Rc<VecModel<ActionButton>>,
     st: RefCell<State>,
 }
 
@@ -148,6 +167,7 @@ impl App {
             pages: Rc::new(VecModel::default()),
             tiles: Rc::new(VecModel::default()),
             modes: Rc::new(VecModel::default()),
+            sheet_buttons: Rc::new(VecModel::default()),
             st: RefCell::new(State {
                 entry_mode: Entry::WifiPassword,
                 entry: String::new(),
@@ -177,6 +197,9 @@ impl App {
                 pending_target: None,
                 dimmer_tile: None,
                 dimmer_touched: None,
+                sheet_tile: None,
+                sheet_code: String::new(),
+                sheet_touched: None,
             }),
         });
 
@@ -185,6 +208,7 @@ impl App {
         ui.set_dash_pages(ModelRc::from(shared.pages.clone()));
         ui.set_tiles(ModelRc::from(shared.tiles.clone()));
         ui.set_climate_modes(ModelRc::from(shared.modes.clone()));
+        ui.set_sheet_buttons(ModelRc::from(shared.sheet_buttons.clone()));
         ui.set_mac_address(wifi.mac.clone().into());
         ui.set_screen_name("ESP32 Screen".into());
         ui.set_firmware_version(crate::ota::VERSION.into());
@@ -416,6 +440,36 @@ impl Shared {
             if let Some(id) = id {
                 s.action(&id, "toggle", None);
             }
+        });
+        on!(on_sheet_action, |s, id| s.sheet_action(&id));
+        on!(on_sheet_slider_commit, |s, value| {
+            let (tile, action) = {
+                let st = s.st.borrow();
+                let Some(tile) = st.sheet_tile.clone() else { return };
+                (tile, st.sheet_slider_action())
+            };
+            if let Some(action) = action {
+                s.st.borrow_mut().sheet_touched = Some(Instant::now());
+                s.action(&tile, action, Some(json!(value)));
+            }
+        });
+        on!(on_sheet_key, |s, key| {
+            {
+                let mut st = s.st.borrow_mut();
+                if st.sheet_code.len() < 12 {
+                    st.sheet_code.push_str(&key);
+                }
+            }
+            s.refresh_popups();
+        });
+        on!(on_sheet_backspace, |s| {
+            s.st.borrow_mut().sheet_code.pop();
+            s.refresh_popups();
+        });
+        on!(on_sheet_closed, |s| {
+            let mut st = s.st.borrow_mut();
+            st.sheet_tile = None;
+            st.sheet_code.clear();
         });
     }
 
@@ -1125,6 +1179,13 @@ impl Shared {
         match tile.kind.as_str() {
             "climate" => self.open_climate(&tile.id),
             "light" if long && state.brightness >= 0 => self.open_dimmer(&tile.id),
+            // Locks and alarm panels always go through the sheet: a stray tap
+            // must never unlock a door or disarm the alarm.
+            "lock" | "alarm" => self.open_sheet(&tile.id),
+            "blind" | "media" if long => self.open_sheet(&tile.id),
+            "sensor" => {}
+            "scene" if !long => self.action(&tile.id, "activate", None),
+            "media" => self.action(&tile.id, "play_pause", None),
             _ if long => {}
             _ => self.action(&tile.id, "toggle", None),
         }
@@ -1153,6 +1214,136 @@ impl Shared {
         self.refresh_popups();
         if let Some(ui) = self.ui() {
             ui.set_dimmer_open(true);
+        }
+    }
+
+    fn open_sheet(&self, id: &str) {
+        {
+            let mut st = self.st.borrow_mut();
+            st.sheet_tile = Some(id.to_string());
+            st.sheet_code.clear();
+            st.sheet_touched = None;
+        }
+        self.refresh_popups();
+        if let Some(ui) = self.ui() {
+            ui.set_sheet_open(true);
+        }
+    }
+
+    fn sheet_action(&self, action: &str) {
+        let Some(id) = self.st.borrow().sheet_tile.clone() else { return };
+        let Some((tile, state)) = self.find_tile(&id) else { return };
+        let action: &'static str = match action {
+            "open" => "open",
+            "close" => "close",
+            "stop" => "stop",
+            "lock" => "lock",
+            "unlock" => "unlock",
+            "arm_home" => "arm_home",
+            "arm_away" => "arm_away",
+            "arm_night" => "arm_night",
+            "arm_vacation" => "arm_vacation",
+            "disarm" => "disarm",
+            "previous" => "previous",
+            "play_pause" | "pause" => "play_pause",
+            "next" => "next",
+            "toggle" => "toggle",
+            _ => return,
+        };
+        let coded = matches!(tile.kind.as_str(), "lock" | "alarm");
+        let code = std::mem::take(&mut self.st.borrow_mut().sheet_code);
+        if coded && state.code_required && code.is_empty() {
+            if let Some(ui) = self.ui() {
+                ui.set_toast("Enter the code first.".into());
+            }
+            return;
+        }
+        let value = (coded && !code.is_empty()).then(|| json!(code));
+        self.action(&id, action, value);
+        self.refresh_popups();
+    }
+
+    fn refresh_sheet(&self, ui: &AppWindow) {
+        let id = self.st.borrow().sheet_tile.clone();
+        let Some((tile, state)) = id.and_then(|id| self.find_tile(&id)) else { return };
+        let button = |id: &str, label: &str, primary: bool| ActionButton {
+            id: id.into(),
+            label: label.into(),
+            primary,
+        };
+        let mut status = state.status.clone();
+        if !state.detail.is_empty() {
+            status = format!("{status} · {}", state.detail);
+        }
+        let (buttons, slider): (Vec<ActionButton>, Option<(&str, i32)>) = match tile.kind.as_str() {
+            "blind" => (
+                vec![
+                    button("open", "Open", false),
+                    button("stop", "Stop", false),
+                    button("close", "Close", false),
+                ],
+                (state.position >= 0).then_some(("Position", state.position)),
+            ),
+            "lock" => (
+                vec![
+                    button("unlock", "Unlock", state.status == "Locked"),
+                    button("lock", "Lock", state.status != "Locked"),
+                ],
+                None,
+            ),
+            "alarm" => {
+                let mut buttons: Vec<ActionButton> = state
+                    .modes
+                    .iter()
+                    .map(|m| {
+                        let label = match m.as_str() {
+                            "arm_home" => "Home",
+                            "arm_away" => "Away",
+                            "arm_night" => "Night",
+                            "arm_vacation" => "Vacation",
+                            _ => "Arm",
+                        };
+                        button(m, label, false)
+                    })
+                    .collect();
+                buttons.push(button("disarm", "Disarm", state.on));
+                (buttons, None)
+            }
+            "media" => (
+                vec![
+                    button("previous", "Previous", false),
+                    // "pause" only picks the pause icon; both send play_pause.
+                    button(if state.on { "pause" } else { "play_pause" }, if state.on { "Pause" } else { "Play" }, true),
+                    button("next", "Next", false),
+                    button("toggle", "Power", false),
+                ],
+                (state.volume >= 0).then_some(("Volume", state.volume)),
+            ),
+            _ => (Vec::new(), None),
+        };
+        let code = self.st.borrow().sheet_code.chars().count();
+        ui.set_sheet_title(tile.label.as_str().into());
+        ui.set_sheet_kind(tile.kind.as_str().into());
+        ui.set_sheet_status(status.into());
+        ui.set_sheet_keypad(matches!(tile.kind.as_str(), "lock" | "alarm") && state.code_required);
+        ui.set_sheet_code("●".repeat(code).into());
+        ui.set_sheet_slider(slider.is_some());
+        if let Some((label, value)) = slider {
+            ui.set_sheet_slider_label(label.into());
+            // Don't fight the finger: skip state echoes right after a change.
+            let recently = self
+                .st
+                .borrow()
+                .sheet_touched
+                .is_some_and(|t| t.elapsed() < Duration::from_secs(2));
+            if !recently {
+                ui.set_sheet_slider_value(value);
+            }
+        }
+        let same = self.sheet_buttons.row_count() == buttons.len()
+            && self.sheet_buttons.iter().zip(&buttons).all(|(a, b)| a == *b);
+        if !same {
+            self.sheet_buttons.set_vec(buttons);
         }
     }
 
@@ -1213,6 +1404,7 @@ impl Shared {
 
     fn refresh_popups(&self) {
         let Some(ui) = self.ui() else { return };
+        self.refresh_sheet(&ui);
         let climate_id = self.st.borrow().climate_tile.clone();
         if let Some((tile, state)) = climate_id.and_then(|id| self.find_tile(&id)) {
             let pending = {
@@ -1319,14 +1511,31 @@ fn tile_data(tile: &Tile, state: Option<&TileState>) -> TileData {
         status: s.status.as_str().into(),
         detail: s.detail.as_str().into(),
         moving: s.moving,
-        mode: s.mode.as_str().into(),
+        // Alarm tiles have no climate mode; "triggered" picks the siren icon.
+        mode: if tile.kind == "alarm" && s.status == "Triggered" {
+            "triggered".into()
+        } else {
+            s.mode.as_str().into()
+        },
         value: big_value(tile, s).into(),
     }
 }
 
-/// Large temperature for climate tiles; the UI shows it on tall tiles only.
+/// Large value for climate and sensor tiles; the UI shows it on tall tiles
+/// only.
 fn big_value(tile: &Tile, s: &TileState) -> String {
-    if tile.kind != "climate" || !s.available {
+    if !s.available {
+        return String::new();
+    }
+    // Numeric sensors only: wording like "Detected" is too wide to be big.
+    if tile.kind == "sensor" {
+        return if tile.entity_id.starts_with("sensor.") {
+            s.status.clone()
+        } else {
+            String::new()
+        };
+    }
+    if tile.kind != "climate" {
         return String::new();
     }
     match s.target {

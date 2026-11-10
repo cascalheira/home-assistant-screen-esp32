@@ -39,3 +39,12 @@ export struct ModeItem {
     id: string,
     label: string,
 }
+
+// A button in the action sheet (blinds, locks, alarm, media). The icon is
+// chosen in Slint from `id` (Icons.for-action), as only glyphs written in the
+// .slint files are embedded.
+export struct ActionButton {
+    id: string,
+    label: string,
+    primary: bool,
+}

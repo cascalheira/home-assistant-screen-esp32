@@ -53,6 +53,12 @@ pub struct TileState {
     pub step: Option<f64>,
     /// Climate humidity in whole percent.
     pub humidity: Option<f64>,
+    /// Cover/valve position 0-100, -1 when unknown.
+    pub position: i32,
+    /// Media player volume 0-100, -1 when not settable.
+    pub volume: i32,
+    /// Lock/alarm takes a code.
+    pub code_required: bool,
     pub mode: String,
     pub modes: Vec<String>,
     pub unit: String,
@@ -73,6 +79,9 @@ impl Default for TileState {
             max: None,
             step: None,
             humidity: None,
+            position: -1,
+            volume: -1,
+            code_required: false,
             mode: String::new(),
             modes: Vec::new(),
             unit: String::new(),
