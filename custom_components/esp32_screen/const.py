@@ -143,6 +143,10 @@ FORECAST_DAYS: Final = 7
 FORECAST_REFRESH: Final = 30 * 60  # seconds
 FORECAST_MIN_INTERVAL: Final = 5 * 60  # seconds between fetches on state changes
 
+# Doorbell (docs/protocol.md, section 9): seconds the camera stays up.
+DOORBELL_TIMEOUT_DEFAULT: Final = 60
+DOORBELL_TIMEOUT_RANGE: Final = (10, 600)
+
 # Per-screen settings (docs/protocol.md, section 7).
 LANGUAGES: Final = ("en", "pt")
 
@@ -154,4 +158,8 @@ def default_settings() -> dict[str, object]:
         "indoor_temperature_entity": "",
         "language": "en",
         "clock_24h": True,
+        "doorbell_entity": "",
+        "doorbell_camera": "",
+        "doorbell_action": "",
+        "doorbell_timeout": DOORBELL_TIMEOUT_DEFAULT,
     }

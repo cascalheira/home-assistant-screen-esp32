@@ -19,6 +19,13 @@ IMAGE=ghcr.io/home-assistant/home-assistant:stable
 mkdir -p "$CONFIG/custom_components/esp32_screen"
 cp "$HA_DIR/dev/configuration.yaml" "$CONFIG/configuration.yaml"
 
+# A test RTSP stream for the doorbell camera (rtsp://<host>:18554/doorbell).
+docker rm -f esp32-screen-rtsp >/dev/null 2>&1 || true
+docker run -d --name esp32-screen-rtsp --restart unless-stopped -p 18554:8554 \
+  -e MTX_PATHS_DOORBELL_RUNONINIT="ffmpeg -re -f lavfi -i testsrc2=size=1280x720:rate=10 -c:v libx264 -preset ultrafast -tune zerolatency -g 20 -f rtsp rtsp://localhost:8554/doorbell" \
+  -e MTX_PATHS_DOORBELL_RUNONINITRESTART=yes \
+  bluenviron/mediamtx:latest-ffmpeg >/dev/null
+
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 docker run -d \
   --name "$NAME" \

@@ -11,18 +11,22 @@ import voluptuous as vol
 
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 
 from .const import (
     DOMAIN,
     ERR_INVALID_LAYOUT,
     ERR_NOT_LOADED,
+    ERR_SERVICE_FAILED,
     MAX_NAME_LEN,
     OTA_STATES,
     SCREEN_ID_PATTERN,
     SCREENSAVER_MODES,
     SCREENSAVER_ROTATE,
+    DOORBELL_TIMEOUT_RANGE,
     LANGUAGES,
 )
+from .doorbell import ACTION_SERVICES, RING_DOMAINS
 from .layout import ENTITY_ID_RE, LayoutError, validate_layout
 from .manager import ActionError, ScreenManager
 
@@ -38,6 +42,7 @@ def async_register_commands(hass: HomeAssistant) -> None:
         ws_register,
         ws_subscribe,
         ws_action,
+        ws_doorbell_action,
         ws_ota_status,
         ws_state,
         ws_screens,
@@ -179,6 +184,30 @@ async def ws_action(
 
 @websocket_api.websocket_command(
     {
+        vol.Required("type"): "esp32_screen/doorbell_action",
+        vol.Required("screen_id"): SCREEN_ID,
+        vol.Required("ring_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_doorbell_action(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """The doorbell screen's button: open the gate, unlock the door, ..."""
+    if (manager := _manager(hass, connection, msg)) is None:
+        return
+    try:
+        await manager.doorbells.async_action(
+            msg["screen_id"], msg["ring_id"], connection.context(msg)
+        )
+    except (HomeAssistantError, vol.Invalid) as err:
+        connection.send_error(msg["id"], ERR_SERVICE_FAILED, str(err))
+        return
+    connection.send_result(msg["id"])
+
+
+@websocket_api.websocket_command(
+    {
         vol.Required("type"): "esp32_screen/ota_status",
         vol.Required("screen_id"): SCREEN_ID,
         vol.Required("state"): vol.In(OTA_STATES),
@@ -295,8 +324,27 @@ def _entity_of(domain: str) -> Any:
     return validate
 
 
+def _entity_in(*domains: str) -> Any:
+    def validate(value: Any) -> str:
+        if value is None or value == "":
+            return ""
+        if (
+            not isinstance(value, str)
+            or not ENTITY_ID_RE.match(value)
+            or value.split(".", 1)[0] not in domains
+        ):
+            raise vol.Invalid(f"must be \"\" or an entity of {', '.join(domains)}")
+        return value
+
+    return validate
+
+
 SETTINGS_SCHEMA = vol.Schema(
     {
+        vol.Optional("doorbell_entity"): _entity_in(*RING_DOMAINS),
+        vol.Optional("doorbell_camera"): _entity_of("camera"),
+        vol.Optional("doorbell_action"): _entity_in(*ACTION_SERVICES),
+        vol.Optional("doorbell_timeout"): vol.All(int, vol.Range(*DOORBELL_TIMEOUT_RANGE)),
         vol.Optional("weather_entity"): _entity_of("weather"),
         vol.Optional("indoor_temperature_entity"): _entity_of("sensor"),
         vol.Optional("language"): vol.In(LANGUAGES),

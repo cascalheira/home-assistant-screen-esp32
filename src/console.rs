@@ -31,7 +31,11 @@ use crate::board::{LCD_H_RES, LCD_V_RES};
 
 #[derive(Debug)]
 pub enum ConsoleCommand {
-    Tap { x: i16, y: i16, ms: u32 },
+    Tap {
+        x: i16,
+        y: i16,
+        ms: u32,
+    },
     Type(String),
     Enter,
     Backspace,
@@ -43,6 +47,8 @@ pub enum ConsoleCommand {
     Bench,
     FlipTest,
     Page(String),
+    /// Show an MJPEG stream as if the doorbell rang (no token is sent).
+    Doorbell(String),
     Forget,
 }
 
@@ -107,6 +113,7 @@ pub fn start(tx: Sender<ConsoleCommand>) {
                         continue;
                     }
                     "page" => ConsoleCommand::Page(arg.to_string()),
+                    "doorbell" => ConsoleCommand::Doorbell(arg.to_string()),
                     "forget" => ConsoleCommand::Forget,
                     "reboot" => unsafe { sys::esp_restart() },
                     "shot" => {

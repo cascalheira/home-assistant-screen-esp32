@@ -54,6 +54,7 @@ from .const import (
     STORAGE_VERSION,
 )
 from .firmware import FirmwareImage, FirmwareStore
+from .doorbell import Doorbells
 from .forecast import async_forecast
 from .notifications import NotificationImages
 from .layout import empty_layout, iter_tiles, upgrade_layout
@@ -358,6 +359,7 @@ class ScreenManager:
         # Last esp32_screen/state report per online screen (memory only).
         self.device_states: dict[str, dict[str, Any]] = {}
         self.notification_images = NotificationImages()
+        self.doorbells = Doorbells(self)
         # Called with a screen_id when its install progress or record changes.
         self._screen_listeners: set[Callable[[str], None]] = set()
 
@@ -370,6 +372,7 @@ class ScreenManager:
             self.screens[screen_id] = ScreenRecord.from_storage(screen_id, raw)
         for record in self.screens.values():
             self._update_device(record)
+        self.doorbells.async_track()
 
     @callback
     def _data_to_save(self) -> dict[str, Any]:
@@ -387,6 +390,7 @@ class ScreenManager:
     @callback
     def async_shutdown(self) -> None:
         """Close all subscriptions (config entry unload)."""
+        self.doorbells.async_stop()
         for subs in self._subscriptions.values():
             for sub in subs:
                 sub.stop()
@@ -644,6 +648,8 @@ class ScreenManager:
             return False
         record.settings = {**record.settings, **changes}
         await self.async_save_now()
+        if any(key.startswith("doorbell_") for key in changes):
+            self.doorbells.async_track()
         for sub in list(self._subscriptions.get(screen_id, ())):
             sub.send_settings()
         self._notify()

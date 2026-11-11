@@ -14,6 +14,7 @@ pub mod tls;
 mod ws;
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -74,6 +75,12 @@ pub enum Command {
     NetworkUp,
     /// Report the backlight/screensaver state (`esp32_screen/state`).
     ReportState(crate::saver::ScreenState),
+    /// The doorbell screen closed: stop the video.
+    DoorbellClose,
+    /// The doorbell screen's button (`esp32_screen/doorbell_action`).
+    DoorbellAction(String),
+    /// Debug console: show an MJPEG stream from any URL (no token sent).
+    DoorbellTest(String),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -131,7 +138,29 @@ pub enum Event {
     },
     /// Close the notification with this id ("" = whatever is showing).
     Dismiss(String),
+    /// The doorbell rang (section 9): show its camera.
+    Doorbell {
+        ring_id: String,
+        title: String,
+        timeout_secs: u64,
+        /// Label of the button that opens the door/gate; "" = no button.
+        action: String,
+        /// A video stream follows (`DoorbellFrame`s).
+        has_video: bool,
+    },
+    /// The next video frame. Decoded only once the previous one was shown
+    /// (see `DOORBELL_FRAME_SHOWN`).
+    DoorbellFrame(Picture),
+    /// The video stopped before the doorbell screen closed.
+    DoorbellVideoLost(String),
+    /// The doorbell's button worked (true) or failed (false, with a reason).
+    DoorbellActionDone(bool, String),
 }
+
+/// Set by the UI once it shows the last `DoorbellFrame`: the stream decodes
+/// the next frame only then, so at most two frames are in memory and frames
+/// the screen couldn't show anyway are skipped without decoding.
+pub static DOORBELL_FRAME_SHOWN: AtomicBool = AtomicBool::new(true);
 
 pub struct HaHandle {
     tx: Sender<Msg>,
@@ -211,6 +240,7 @@ pub fn start(
         updates,
         backoff: 0,
         legacy_state: false,
+        stream: None,
         mfa: None,
         mdns: None,
         cache: sd_card.then(cache::Cache::default),
@@ -290,7 +320,36 @@ enum Pending {
     /// `esp32_screen/state`; failures are retried in the old format, never
     /// shown on the screen.
     State(crate::saver::ScreenState),
+    DoorbellAction,
 }
+
+/// The doorbell video being received.
+struct Stream {
+    conn: StreamConnection,
+    /// Bytes received and not yet part of a whole JPEG.
+    buf: Vec<u8>,
+    until: Instant,
+    started: Instant,
+    frames: u32,
+    skipped: u32,
+    /// The newest whole JPEG not decoded yet (older ones are dropped).
+    pending: Option<Vec<u8>>,
+    /// Two frame buffers, used in turn (see `decode_jpeg_into`).
+    pool: [Option<Picture>; 2],
+    next: usize,
+    decode_time: Duration,
+}
+
+/// The video's HTTP connection. Created and used only on the worker's
+/// thread; the worker (with `stream: None`) is moved there before any exists.
+struct StreamConnection(esp_idf_svc::http::client::EspHttpConnection);
+// SAFETY: see above; the connection never leaves the worker thread.
+unsafe impl Send for StreamConnection {}
+
+/// The doorbell video gives up on a frame larger than this.
+const MAX_FRAME_BYTES: usize = 256 * 1024;
+/// The stream's socket timeout: no data for this long ends the video.
+const STREAM_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 struct Worker {
     screen_id: String,
@@ -314,6 +373,8 @@ struct Worker {
     /// The integration predates `screensaver_weather`/`screensaver_rotate`
     /// (before 0.4.0): report state without them. Reset on every subscribe.
     legacy_state: bool,
+    /// Doorbell video, while the doorbell screen shows.
+    stream: Option<Stream>,
     /// Base URL and flow id of a login waiting for its second factor.
     mfa: Option<(String, String)>,
     mdns: Option<EspMdns>,
@@ -363,16 +424,37 @@ impl Worker {
             self.emit(Event::Status(Status::NotConfigured));
         }
         loop {
-            match rx.recv_timeout(Duration::from_millis(500)) {
-                Ok(Msg::Command(c)) => self.command(c),
-                Ok(Msg::Ws(generation, event)) if generation == self.generation => {
-                    self.ws_event(event)
-                }
-                Ok(Msg::Ws(..)) => {} // from a connection we already dropped
+            // While the doorbell video runs, reading it paces the loop:
+            // handle whatever arrived, then read the next frame.
+            let wait = if self.stream.is_some() {
+                Duration::ZERO
+            } else {
+                Duration::from_millis(500)
+            };
+            match rx.recv_timeout(wait) {
+                Ok(msg) => self.handle(msg),
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => return,
             }
+            while self.stream.is_some() {
+                match rx.try_recv() {
+                    Ok(msg) => self.handle(msg),
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(mpsc::TryRecvError::Disconnected) => return,
+                }
+            }
+            if self.stream.is_some() {
+                self.pump_stream();
+            }
             self.tick();
+        }
+    }
+
+    fn handle(&mut self, msg: Msg) {
+        match msg {
+            Msg::Command(c) => self.command(c),
+            Msg::Ws(generation, event) if generation == self.generation => self.ws_event(event),
+            Msg::Ws(..) => {} // from a connection we already dropped
         }
     }
 
@@ -493,6 +575,25 @@ impl Worker {
                 if self.phase == Phase::Live {
                     self.report_state(state);
                 }
+            }
+            Command::DoorbellClose => self.stop_stream("closed"),
+            Command::DoorbellAction(ring_id) => {
+                let msg = json!({
+                    "type": "esp32_screen/doorbell_action",
+                    "screen_id": self.screen_id,
+                    "ring_id": ring_id,
+                });
+                self.request(msg, Pending::DoorbellAction);
+            }
+            Command::DoorbellTest(url) => {
+                self.emit(Event::Doorbell {
+                    ring_id: String::new(),
+                    title: "Test video".into(),
+                    timeout_secs: 60,
+                    action: String::new(),
+                    has_video: true,
+                });
+                self.start_stream(&url, 60, false);
             }
             Command::NetworkUp => {
                 if matches!(self.phase, Phase::Retry { .. }) {
@@ -852,6 +953,17 @@ impl Worker {
                 }
             }
             Pending::State(_) => {}
+            Pending::DoorbellAction => {
+                if !success {
+                    log::warn!("doorbell action failed: {code} {message}");
+                }
+                let text = if message.is_empty() {
+                    code.to_string()
+                } else {
+                    message
+                };
+                self.emit(Event::DoorbellActionDone(success, text));
+            }
             Pending::Subscribe => {
                 log::info!("subscribed to screen {}", self.screen_id);
                 self.legacy_state = false;
@@ -994,6 +1106,28 @@ impl Worker {
                 Ok(forecast) => self.emit(Event::Forecast(forecast)),
                 Err(e) => log::warn!("ignoring a forecast: {e}"),
             },
+            Some("doorbell") => {
+                let text = |key: &str| event[key].as_str().unwrap_or("").to_string();
+                let url = text("stream_url");
+                let timeout = event["timeout"].as_u64().unwrap_or(60).clamp(5, 600);
+                log::info!("doorbell {} (video: {})", text("id"), !url.is_empty());
+                self.stop_stream("rang again");
+                self.emit(Event::Doorbell {
+                    ring_id: text("id"),
+                    title: text("title"),
+                    timeout_secs: timeout,
+                    action: text("action"),
+                    has_video: !url.is_empty(),
+                });
+                if !url.is_empty() {
+                    let base = self
+                        .stored
+                        .as_ref()
+                        .map(|s| s.url.clone())
+                        .unwrap_or_default();
+                    self.start_stream(&format!("{base}{url}"), timeout, true);
+                }
+            }
             Some("info") => {
                 let text = |key: &str| event[key].as_str().unwrap_or("").to_string();
                 self.emit(Event::Info {
@@ -1052,6 +1186,15 @@ impl Worker {
         &mut self,
         url: &str,
     ) -> Result<esp_idf_svc::http::client::EspHttpConnection> {
+        self.authenticated_get_with(url, Duration::from_secs(30))
+    }
+
+    /// `authenticated_get` with a socket timeout.
+    fn authenticated_get_with(
+        &mut self,
+        url: &str,
+        timeout: Duration,
+    ) -> Result<esp_idf_svc::http::client::EspHttpConnection> {
         use esp_idf_svc::http::client::{Configuration, EspHttpConnection};
         use esp_idf_svc::http::Method;
         if let Some(stored) = &self.stored {
@@ -1062,7 +1205,7 @@ impl Worker {
             attempt += 1;
             let token = self.access.clone().unwrap_or_default();
             let mut conn = EspHttpConnection::new(&Configuration {
-                timeout: Some(Duration::from_secs(30)),
+                timeout: Some(timeout),
                 buffer_size: Some(4096),
                 crt_bundle_attach: Some(tls::attach),
                 ..Default::default()
@@ -1090,6 +1233,123 @@ impl Worker {
         Ok(conn)
     }
 
+    /// Opens the doorbell video (`multipart/x-mixed-replace` of JPEGs).
+    fn start_stream(&mut self, url: &str, timeout_secs: u64, with_token: bool) {
+        use esp_idf_svc::http::client::{Configuration, EspHttpConnection};
+        use esp_idf_svc::http::Method;
+        let opened = if with_token {
+            self.authenticated_get_with(url, STREAM_READ_TIMEOUT)
+        } else {
+            EspHttpConnection::new(&Configuration {
+                timeout: Some(STREAM_READ_TIMEOUT),
+                buffer_size: Some(4096),
+                ..Default::default()
+            })
+            .map_err(anyhow::Error::from)
+            .and_then(|mut conn| {
+                conn.initiate_request(Method::Get, url, &[])?;
+                conn.initiate_response()?;
+                match conn.status() {
+                    200 => Ok(conn),
+                    status => anyhow::bail!("HTTP {status}"),
+                }
+            })
+        };
+        match opened {
+            Ok(conn) => {
+                log::info!("doorbell video opened");
+                DOORBELL_FRAME_SHOWN.store(true, Ordering::SeqCst);
+                let now = Instant::now();
+                self.stream = Some(Stream {
+                    conn: StreamConnection(conn),
+                    buf: Vec::with_capacity(64 * 1024),
+                    until: now + Duration::from_secs(timeout_secs + 5),
+                    started: now,
+                    frames: 0,
+                    skipped: 0,
+                    pending: None,
+                    pool: [None, None],
+                    next: 0,
+                    decode_time: Duration::ZERO,
+                });
+            }
+            Err(e) => {
+                log::warn!("doorbell video: {e:#}");
+                self.emit(Event::DoorbellVideoLost(format!("{e:#}")));
+            }
+        }
+    }
+
+    fn stop_stream(&mut self, why: &str) {
+        if let Some(stream) = self.stream.take() {
+            let secs = stream.started.elapsed().as_secs_f32().max(0.1);
+            log::info!(
+                "doorbell video {why}: {} frames shown, {} skipped, {:.1} fps, decoding {} ms a frame",
+                stream.frames,
+                stream.skipped,
+                stream.frames as f32 / secs,
+                stream.decode_time.as_millis() / stream.frames.max(1) as u128
+            );
+        }
+    }
+
+    /// Decodes the newest frame as soon as the UI has shown the previous
+    /// one; otherwise reads more of the video (one chunk, so the UI's
+    /// readiness is checked often), keeping only the newest whole JPEG.
+    fn pump_stream(&mut self) {
+        let Some(stream) = &mut self.stream else {
+            return;
+        };
+        if Instant::now() >= stream.until {
+            self.stop_stream("timed out");
+            return;
+        }
+        if stream.pending.is_some() && DOORBELL_FRAME_SHOWN.swap(false, Ordering::SeqCst) {
+            let frame = stream.pending.take().unwrap_or_default();
+            let t = Instant::now();
+            let slot = stream.next;
+            match decode_jpeg_into(frame, false, stream.pool[slot].take()) {
+                Ok(picture) => {
+                    stream.decode_time += t.elapsed();
+                    stream.frames += 1;
+                    stream.next = 1 - slot;
+                    stream.pool[slot] = Some(picture.clone());
+                    self.emit(Event::DoorbellFrame(picture));
+                }
+                Err(e) => {
+                    DOORBELL_FRAME_SHOWN.store(true, Ordering::SeqCst);
+                    stream.skipped += 1;
+                    log::warn!("doorbell frame: {e:#}");
+                }
+            }
+            return;
+        }
+        let mut chunk = [0u8; 4096];
+        match stream.conn.0.read(&mut chunk) {
+            Ok(0) => {
+                self.stop_stream("ended");
+                self.emit(Event::DoorbellVideoLost("the video ended".into()));
+            }
+            Ok(n) => {
+                stream.buf.extend_from_slice(&chunk[..n]);
+                while let Some(frame) = crate::logic::image::take_jpeg(&mut stream.buf) {
+                    if stream.pending.replace(frame).is_some() {
+                        stream.skipped += 1;
+                    }
+                }
+                if stream.buf.len() > MAX_FRAME_BYTES {
+                    log::warn!("doorbell video: frame too large, resyncing");
+                    stream.buf.clear();
+                }
+            }
+            Err(e) => {
+                log::warn!("doorbell video: {e}");
+                self.stop_stream("failed");
+                self.emit(Event::DoorbellVideoLost(e.to_string()));
+            }
+        }
+    }
+
     /// Downloads a notification image (at most 256 KB) and decodes the JPEG.
     fn fetch_image(&mut self, url: &str) -> Result<Picture> {
         use anyhow::Context;
@@ -1107,7 +1367,7 @@ impl Worker {
             }
         }
         log::info!("notification image: {} bytes", data.len());
-        decode_jpeg(data)
+        decode_jpeg(data, true)
     }
 
     fn download_and_install(
@@ -1209,7 +1469,14 @@ const PSRAM_RESERVE: usize = 96 * 1024;
 /// Decodes a baseline JPEG with Espressif's esp_jpeg component (TJpgDec from
 /// the chip's ROM: a few KB of working memory, little stack). The pixels go
 /// straight into the buffer the UI will show.
-fn decode_jpeg(mut data: Vec<u8>) -> Result<Picture> {
+fn decode_jpeg(data: Vec<u8>, verbose: bool) -> Result<Picture> {
+    decode_jpeg_into(data, verbose, None)
+}
+
+/// `decode_jpeg`, reusing `reuse` when it has the right size and nothing
+/// else holds it (no allocation: the doorbell video alternates between two
+/// buffers, which keeps PSRAM from fragmenting).
+fn decode_jpeg_into(mut data: Vec<u8>, verbose: bool, reuse: Option<Picture>) -> Result<Picture> {
     use esp_idf_svc::sys::{esp, jpeg};
     let mut cfg = jpeg::esp_jpeg_image_cfg_t {
         indata: data.as_mut_ptr(),
@@ -1225,21 +1492,33 @@ fn decode_jpeg(mut data: Vec<u8>) -> Result<Picture> {
     if width * height > MAX_PICTURE_PIXELS {
         anyhow::bail!("image too large ({width}x{height})");
     }
-    // Leave PSRAM for everything else: the firmware runs from PSRAM, so
-    // only a few hundred KB are free to begin with.
-    let needed = width * height * 3;
-    let largest = unsafe {
-        esp_idf_svc::sys::heap_caps_get_largest_free_block(esp_idf_svc::sys::MALLOC_CAP_SPIRAM)
+    let reuse = reuse.filter(|p| p.width() as usize == width && p.height() as usize == height);
+    let mut picture = match reuse {
+        Some(picture) => picture,
+        None => {
+            // Leave PSRAM for everything else: the firmware runs from PSRAM,
+            // so only a few hundred KB are free to begin with.
+            let needed = width * height * 3;
+            let largest = unsafe {
+                esp_idf_svc::sys::heap_caps_get_largest_free_block(
+                    esp_idf_svc::sys::MALLOC_CAP_SPIRAM,
+                )
+            };
+            if largest < needed + PSRAM_RESERVE {
+                anyhow::bail!(
+                    "not enough memory for a {width}x{height} picture ({largest} B free)"
+                );
+            }
+            Picture::new(width as u32, height as u32)
+        }
     };
-    if largest < needed + PSRAM_RESERVE {
-        anyhow::bail!("not enough memory for a {width}x{height} picture ({largest} B free)");
-    }
-    let mut picture = Picture::new(width as u32, height as u32);
     let out = picture.make_mut_bytes();
     cfg.outbuf = out.as_mut_ptr();
     cfg.outbuf_size = out.len() as u32;
     esp!(unsafe { jpeg::esp_jpeg_decode(&mut cfg, &mut info) })
         .map_err(|e| anyhow::anyhow!("decoding failed ({e})"))?;
-    log::info!("notification image {width}x{height}");
+    if verbose {
+        log::info!("notification image {width}x{height}");
+    }
     Ok(picture)
 }

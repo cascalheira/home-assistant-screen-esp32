@@ -23,3 +23,19 @@ pub fn descriptor(header: &[u8]) -> Option<(String, String)> {
     };
     Some((text(80..112), text(48..80)))
 }
+
+/// Removes and returns the first whole JPEG (SOI ... EOI) from `buf`,
+/// dropping whatever comes before it (multipart headers). Inside a JPEG's
+/// data 0xFF is always followed by 0x00 or a restart marker, so the first
+/// FF D9 after FF D8 ends it.
+pub fn take_jpeg(buf: &mut Vec<u8>) -> Option<Vec<u8>> {
+    let start = buf.windows(2).position(|w| w == [0xFF, 0xD8])?;
+    let end = buf[start + 2..]
+        .windows(2)
+        .position(|w| w == [0xFF, 0xD9])?
+        + start
+        + 4;
+    let frame = buf[start..end].to_vec();
+    buf.drain(..end);
+    Some(frame)
+}

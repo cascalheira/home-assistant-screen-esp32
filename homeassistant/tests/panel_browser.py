@@ -297,11 +297,18 @@ async def main() -> int:
             await settings.locator("select[data-change='setting-language']").select_option("pt")
             await page.wait_for_timeout(500)
             await settings.locator("input[data-change='setting-clock_24h']").uncheck()
-            await page.wait_for_timeout(800)
+            await page.wait_for_timeout(500)
+            for key, value in (("doorbell_entity", "binary_sensor.doorbell"), ("doorbell_camera", "camera.front_door"),
+                               ("doorbell_action", "cover.front_gate"), ("doorbell_timeout", "120")):
+                await settings.locator(f"select[data-change='setting-{key}']").select_option(value)
+                await page.wait_for_timeout(500)
+            await page.wait_for_timeout(300)
             screens = (await ws.call("esp32_screen/screens"))["screens"]
             stored = next(s_ for s_ in screens if s_["screen_id"] == SIM_ID)["settings"]
             check(stored == {"weather_entity": "weather.demo_weather_south", "indoor_temperature_entity": "sensor.living_room_temperature",
-                             "language": "pt", "clock_24h": False}, "screen settings saved from the panel", str(stored))
+                             "language": "pt", "clock_24h": False, "doorbell_entity": "binary_sensor.doorbell",
+                             "doorbell_camera": "camera.front_door", "doorbell_action": "cover.front_gate", "doorbell_timeout": 120},
+                  "screen settings saved from the panel", str(stored))
             await settings.scroll_into_view_if_needed()
             await page.screenshot(path="/tmp/ha-editor-14-settings.png", full_page=True)
             await ws.call("esp32_screen/screen/update", screen_id=SIM_ID, settings={
@@ -327,7 +334,7 @@ async def main() -> int:
                 if name == "6-real-light":
                     await p.locator("esp32-screen-panel .device").screenshot(path="/tmp/ha-editor-13-preview-icons.png")
                     tab_icons = await p.locator("esp32-screen-panel .dtab ha-icon").evaluate_all("els => els.map(e => e.getAttribute('icon'))")
-                    check(tab_icons == ["mdi:sofa", "mdi:thermostat", "mdi:robot"], "real screen preview tabs show page icons", str(tab_icons))
+                    check(tab_icons[:3] == ["mdi:sofa", "mdi:thermostat", "mdi:robot"], "real screen preview tabs show page icons", str(tab_icons))
                     await p.locator("esp32-screen-panel .tile", has_text="Hvac").click()
                     await p.wait_for_timeout(300)
                     await p.screenshot(path="/tmp/ha-editor-11-real-climate-sensors.png")

@@ -29,6 +29,7 @@ _LOGGER = logging.getLogger(__name__)
 
 SERVICE_NOTIFY = "notify"
 SERVICE_DISMISS = "dismiss"
+SERVICE_RING = "ring"
 NOTIFICATION_URL = "/api/esp32_screen/notification"
 IMAGE_MAX_SIZE = (480, 300)
 IMAGE_QUALITY = 80
@@ -54,6 +55,13 @@ DISMISS_SCHEMA = vol.Schema(
     {
         vol.Optional("device_id"): vol.All(cv.ensure_list, [cv.string]),
         vol.Optional("id", default=""): cv.string,
+    }
+)
+
+
+RING_SCHEMA = vol.Schema(
+    {
+        vol.Optional("device_id"): vol.All(cv.ensure_list, [cv.string]),
     }
 )
 
@@ -110,7 +118,7 @@ def to_jpeg(raw: bytes) -> bytes:
         return buf.getvalue()
 
 
-async def _fetch_image(hass: HomeAssistant, entity_id: str) -> bytes:
+async def fetch_image(hass: HomeAssistant, entity_id: str) -> bytes:
     domain = entity_id.split(".", 1)[0]
     try:
         if domain == "camera":
@@ -151,7 +159,7 @@ def _target_screens(hass: HomeAssistant, device_ids: list[str] | None) -> list[s
 
 @callback
 def async_register_services(hass: HomeAssistant) -> None:
-    """Register esp32_screen.notify and esp32_screen.dismiss."""
+    """Register esp32_screen.notify, .dismiss and .ring."""
 
     async def notify(call: ServiceCall) -> ServiceResponse:
         manager = hass.data.get(DOMAIN)
@@ -162,7 +170,7 @@ def async_register_services(hass: HomeAssistant) -> None:
         notification_id = secrets.token_hex(8)
         image_url = ""
         if entity_id := call.data.get("image_entity"):
-            manager.notification_images.add(notification_id, await _fetch_image(hass, entity_id))
+            manager.notification_images.add(notification_id, await fetch_image(hass, entity_id))
             image_url = f"{NOTIFICATION_URL}/{notification_id}.jpg"
         event = {
             "kind": "notify",
@@ -187,6 +195,25 @@ def async_register_services(hass: HomeAssistant) -> None:
         supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(DOMAIN, SERVICE_DISMISS, dismiss, schema=DISMISS_SCHEMA)
+
+    async def ring(call: ServiceCall) -> ServiceResponse:
+        manager = hass.data.get(DOMAIN)
+        targets = _target_screens(hass, call.data.get("device_id"))
+        rang = {
+            sid: ring_id
+            for sid in targets
+            if manager.screens[sid].settings.get("doorbell_camera")
+            or manager.screens[sid].settings.get("doorbell_entity")
+            if (ring_id := manager.doorbells.async_ring(sid)) is not None
+        }
+        if call.data.get("device_id") and not rang:
+            raise HomeAssistantError("None of the target screens is online with a doorbell set up")
+        return {"screens": list(rang)}
+
+    hass.services.async_register(
+        DOMAIN, SERVICE_RING, ring, schema=RING_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
 
 
 class NotificationImageView(HomeAssistantView):

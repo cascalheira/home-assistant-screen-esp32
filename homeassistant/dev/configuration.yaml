@@ -26,6 +26,15 @@ input_boolean:
   room_sensor_online:
     name: Room sensor online
     initial: true
+  doorbell_pressed:
+    name: Doorbell pressed
+
+# Doorbell: a camera on the test RTSP stream that dev/run-ha.sh starts, and a
+# ring sensor driven by input_boolean.doorbell_pressed.
+camera:
+  - platform: ffmpeg
+    name: Front door
+    input: rtsp://host.docker.internal:18554/doorbell
 
 # Values behind the template room sensors below (for climate tile tests).
 input_number:
@@ -120,6 +129,10 @@ template:
           - action: input_boolean.turn_off
             target:
               entity_id: input_boolean.gate_relay
+    binary_sensor:
+      - name: Doorbell
+        unique_id: dev_doorbell
+        state: "{{ is_state('input_boolean.doorbell_pressed', 'on') }}"
     light:
       - name: Porch Light
         unique_id: dev_porch_light

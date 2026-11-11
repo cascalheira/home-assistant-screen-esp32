@@ -198,7 +198,9 @@ async def settings_tests(admin: HAWebSocket, sim: ScreenSim) -> None:
         check(False, "a weather entity -> forecast event", str([e for e in sim.events[mark:] if e.get("kind") == "forecast"]))
     stored = next(s_ for s_ in (await admin.call("esp32_screen/screens"))["screens"] if s_["screen_id"] == SIM_ID)
     check(stored["settings"] == {"weather_entity": "weather.demo_weather_south", "indoor_temperature_entity": "sensor.living_room_temperature",
-                                 "language": "pt", "clock_24h": False}, "settings stored with the screen record", str(stored["settings"]))
+                                 "language": "pt", "clock_24h": False, "doorbell_entity": "", "doorbell_camera": "",
+                                 "doorbell_action": "", "doorbell_timeout": 60},
+          "settings stored with the screen record", str(stored["settings"]))
 
     mark = sim.mark()
     await admin.call("call_service", domain="input_number", service="set_value",
@@ -245,6 +247,107 @@ async def settings_tests(admin: HAWebSocket, sim: ScreenSim) -> None:
         check(forecast == {"kind": "forecast", "unit": "", "days": []}, "clearing the weather entity -> empty forecast", str(forecast))
     except TimeoutError:
         check(False, "clearing the entities -> empty info", "no info event")
+
+
+async def read_frames(sim: ScreenSim, url: str, count: int, limit: float = 20) -> tuple[int, str, list[bytes], float]:
+    """Open an MJPEG stream like the screen: (status, content type, the first `count` JPEGs, seconds)."""
+    assert sim.session is not None
+    headers = {"Authorization": f"Bearer {sim.tokens['access_token']}"}
+    frames: list[bytes] = []
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    async with sim.session.get(sim.url + url, headers=headers) as resp:
+        if resp.status != 200:
+            return resp.status, "", [], 0.0
+        buf = b""
+        try:
+            async with asyncio.timeout(limit):
+                async for chunk in resp.content.iter_any():
+                    buf += chunk
+                    while (start := buf.find(b"\xff\xd8")) >= 0 and (end := buf.find(b"\xff\xd9", start)) >= 0:
+                        frames.append(buf[start:end + 2])
+                        buf = buf[end + 2:]
+                    if len(frames) >= count:
+                        break
+        except TimeoutError:
+            pass
+        return resp.status, resp.headers.get("Content-Type", ""), frames[:count], loop.time() - started
+
+
+async def doorbell_tests(admin: HAWebSocket, sim: ScreenSim) -> None:
+    """Section 9: doorbell settings, rings, the MJPEG stream and the door action."""
+    async def update(**settings: Any) -> Any:
+        return await admin.call("esp32_screen/screen/update", screen_id=SIM_ID, settings=settings)
+
+    await expect_error(update(doorbell_entity="light.bed_light"), "invalid_format", "doorbell_entity must be event/binary_sensor")
+    await expect_error(update(doorbell_camera="sensor.outside_temperature"), "invalid_format", "doorbell_camera must be camera.*")
+    await expect_error(update(doorbell_action="light.bed_light"), "invalid_format", "doorbell_action must be openable")
+    await expect_error(update(doorbell_timeout=5), "invalid_format", "doorbell_timeout below 10 s")
+    await update(doorbell_entity="binary_sensor.doorbell", doorbell_camera="camera.front_door",
+                 doorbell_action="cover.front_gate", doorbell_timeout=20)
+
+    async def press(on: bool) -> None:
+        await admin.call("call_service", domain="input_boolean", service="turn_on" if on else "turn_off",
+                         target={"entity_id": "input_boolean.doorbell_pressed"}, service_data={})
+
+    await press(False)
+    mark = sim.mark()
+    await press(True)
+    try:
+        ev = await sim.wait_for(lambda e: e.get("kind") == "doorbell", 5, since=mark)
+    except TimeoutError:
+        check(False, "doorbell sensor on -> doorbell event", "no event")
+        return
+    ring_id = ev["id"]
+    check(ev == {"kind": "doorbell", "id": ring_id, "title": "Front door",
+                 "stream_url": f"/api/esp32_screen/doorbell/{ring_id}.mjpeg", "timeout": 20, "action": "Front Gate"}
+          and len(ring_id) == 16, "doorbell sensor on -> doorbell event with stream, timeout and action", str(ev))
+    mark = sim.mark()
+    await press(False)
+    await asyncio.sleep(0.5)
+    check(not any(e.get("kind") == "doorbell" for e in sim.events[mark:]), "doorbell sensor off -> no ring")
+
+    status, ctype, frames, secs = await read_frames(sim, ev["stream_url"], 6)
+    infos = [jpeg_info(f) for f in frames]
+    check(status == 200 and ctype.startswith("multipart/x-mixed-replace") and len(frames) == 6
+          and all(sof == "SOF0" and 0 < w <= 512 and 0 < h <= 384 for sof, w, h in infos),
+          "RTSP camera -> MJPEG of baseline JPEGs within 512x384",
+          f"status={status} type={ctype} frames={len(frames)} {infos[:2]} in {secs:.1f}s "
+          f"sizes={[len(f) for f in frames[:3]]}")
+    status, _, _ = await sim.download(ev["stream_url"], token=None)
+    check(status == 401, "stream without a token -> 401", str(status))
+    status, _, _ = await sim.download("/api/esp32_screen/doorbell/0123456789abcdef.mjpeg")
+    check(status == 404, "unknown ring -> 404", str(status))
+
+    await admin.call("call_service", domain="cover", service="close_cover", target={"entity_id": "cover.front_gate"}, service_data={})
+    result = await sim.ws.call("esp32_screen/doorbell_action", screen_id=SIM_ID, ring_id=ring_id)
+    await asyncio.sleep(0.3)
+    gate = next(s for s in await admin.call("get_states") if s["entity_id"] == "cover.front_gate")
+    check(result is None and gate["state"] == "open", "doorbell action opens the gate", gate["state"])
+    await admin.call("call_service", domain="cover", service="close_cover", target={"entity_id": "cover.front_gate"}, service_data={})
+    await expect_error(sim.ws.call("esp32_screen/doorbell_action", screen_id=SIM_ID, ring_id="nope"),
+                       "service_failed", "doorbell action for an unknown ring -> service_failed")
+
+    # A camera without a stream source: snapshots instead.
+    await update(doorbell_camera="camera.demo_camera_without_stream", doorbell_action="")
+    mark = sim.mark()
+    result = await admin.call("call_service", domain="esp32_screen", service="ring", service_data={}, return_response=True)
+    try:
+        ev = await sim.wait_for(lambda e: e.get("kind") == "doorbell", 5, since=mark)
+        check(ev["action"] == "" and SIM_ID in result["response"]["screens"],
+              "esp32_screen.ring -> doorbell event, no action without doorbell_action", f"{ev} {result}")
+        status, ctype, frames, secs = await read_frames(sim, ev["stream_url"], 2)
+        check(status == 200 and len(frames) == 2 and all(jpeg_info(f)[0] == "SOF0" for f in frames),
+              "camera without a stream source -> MJPEG of snapshots", f"{status} {len(frames)} in {secs:.1f}s")
+    except TimeoutError:
+        check(False, "esp32_screen.ring -> doorbell event", "no event")
+
+    await update(doorbell_camera="")
+    mark = sim.mark()
+    await admin.call("call_service", domain="esp32_screen", service="ring", service_data={})
+    ev = await sim.wait_for(lambda e: e.get("kind") == "doorbell", 5, since=mark)
+    check(ev["stream_url"] == "", "no camera -> doorbell event without a stream", str(ev))
+    await update(doorbell_entity="", doorbell_camera="", doorbell_action="", doorbell_timeout=60)
 
 
 def jpeg_info(data: bytes) -> tuple[str, int, int]:
@@ -1057,6 +1160,9 @@ async def main() -> int:
 
         # ---- notifications (section 8) -----------------------------------------------------------
         await notification_tests(admin, sim, url)
+
+        # ---- doorbell (section 9) ------------------------------------------------------------------
+        await doorbell_tests(admin, sim)
 
         # ---- firmware updates (section 5) -------------------------------------------------------
         await firmware_tests(admin, sim, firmware_dir, session, url)

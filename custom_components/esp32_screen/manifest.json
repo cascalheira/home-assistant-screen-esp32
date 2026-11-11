@@ -3,6 +3,7 @@
   "name": "ESP32 Screen",
   "after_dependencies": [
     "camera",
+    "ffmpeg",
     "image"
   ],
   "codeowners": [
@@ -21,5 +22,5 @@
   "issue_tracker": "https://github.com/cascalheira/home-assistant-screen-esp32/issues",
   "requirements": [],
   "single_config_entry": true,
-  "version": "0.4.0"
+  "version": "0.5.0"
 }

@@ -85,6 +85,8 @@ const normLayout = (layout) => ({
 });
 
 const SENSOR_FIELDS = ["temperature_entity", "humidity_entity"];
+// Entities the doorbell screen's button can open (doorbell.ACTION_SERVICES).
+const DOORBELL_ACTION_DOMAINS = ["lock", "cover", "switch", "button", "input_button", "script"];
 
 const ranAgo = (iso) => {
   if (!iso) return "Never ran";
@@ -486,7 +488,8 @@ class Esp32ScreenPanel extends HTMLElement {
     // Do not rebuild while the user is in one of the controls.
     if (el.contains(this.shadowRoot.activeElement)) return;
     const pending = !this._screens.includes(screen);
-    const st = screen.settings || { weather_entity: "", indoor_temperature_entity: "", language: "en", clock_24h: true };
+    const st = { weather_entity: "", indoor_temperature_entity: "", language: "en", clock_24h: true,
+      doorbell_entity: "", doorbell_camera: "", doorbell_action: "", doorbell_timeout: 60, ...(screen.settings || {}) };
     const states = Object.values(this._hass.states);
     const label = (s) => {
       const unit = s.attributes.unit_of_measurement || s.attributes.temperature_unit || "";
@@ -504,7 +507,7 @@ class Esp32ScreenPanel extends HTMLElement {
     const html = `
       <div class="settings-head">
         <div class="side-title">Screen settings</div>
-        <span class="muted">${pending ? "Save a layout first; settings belong to a screen HA knows." : this._settingsNotice ? esc(this._settingsNotice) : "Applied right away. Used by the clock screensaver."}</span>
+        <span class="muted">${pending ? "Save a layout first; settings belong to a screen HA knows." : this._settingsNotice ? esc(this._settingsNotice) : "Applied right away."}</span>
       </div>
       <div class="settings-grid">
         <label class="field">Weather
@@ -529,6 +532,36 @@ class Esp32ScreenPanel extends HTMLElement {
         <label class="field check">
           <span>Clock</span>
           <span class="check-row"><input type="checkbox" data-change="setting-clock_24h" ${st.clock_24h ? "checked" : ""} ${pending ? "disabled" : ""}> 24-hour</span>
+        </label>
+      </div>
+      <div class="settings-head">
+        <div class="side-title">Doorbell</div>
+        <span class="muted">When it rings, the screen wakes up and shows the camera live.</span>
+      </div>
+      <div class="settings-grid">
+        <label class="field">Rings with
+          <select data-change="setting-doorbell_entity" ${pending ? "disabled" : ""}>
+            <option value="" ${st.doorbell_entity ? "" : "selected"}>No doorbell</option>
+            <optgroup label="Events">${options(states.filter((s) => s.entity_id.startsWith("event.")).sort(byName), st.doorbell_entity)}</optgroup>
+            <optgroup label="Binary sensors">${options(states.filter((s) => s.entity_id.startsWith("binary_sensor.")).sort(byName), st.doorbell_entity)}</optgroup>
+          </select>
+        </label>
+        <label class="field">Camera
+          <select data-change="setting-doorbell_camera" ${pending ? "disabled" : ""}>
+            <option value="" ${st.doorbell_camera ? "" : "selected"}>No camera</option>
+            ${options(states.filter((s) => s.entity_id.startsWith("camera.")).sort(byName), st.doorbell_camera)}
+          </select>
+        </label>
+        <label class="field">Button on the screen
+          <select data-change="setting-doorbell_action" ${pending ? "disabled" : ""}>
+            <option value="" ${st.doorbell_action ? "" : "selected"}>None</option>
+            ${options(states.filter((s) => DOORBELL_ACTION_DOMAINS.includes(s.entity_id.split(".")[0])).sort(byName), st.doorbell_action)}
+          </select>
+        </label>
+        <label class="field">Show for
+          <select data-change="setting-doorbell_timeout" ${pending ? "disabled" : ""}>
+            ${[30, 60, 120, 300].map((s) => `<option value="${s}" ${Number(st.doorbell_timeout) === s ? "selected" : ""}>${s < 60 ? `${s} s` : `${s / 60} min`}</option>`).join("")}
+          </select>
         </label>
       </div>`;
     if (el._html === html) return;
@@ -1123,7 +1156,8 @@ class Esp32ScreenPanel extends HTMLElement {
     if (!key) return;
     if (key.startsWith("setting-")) {
       const name = key.slice(8);
-      this._saveSetting(name, name === "clock_24h" ? e.target.checked : e.target.value);
+      const value = name === "clock_24h" ? e.target.checked : name === "doorbell_timeout" ? Number(e.target.value) : e.target.value;
+      this._saveSetting(name, value);
       return;
     }
     const page = this._page();

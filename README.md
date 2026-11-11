@@ -44,6 +44,10 @@ Assistant.
 5. **Notifications.** Home Assistant can show a message on the screen, with
    a camera snapshot or another picture. The screen wakes up for it. A tap
    closes it, and so do its timeout and Home Assistant.
+6. **Doorbell.** When the doorbell rings, the screen wakes and shows its
+   camera live (about 3-4 frames a second), with an optional button to open
+   the gate or door. Home Assistant turns the camera's RTSP stream into small
+   JPEGs with ffmpeg.
 
 With an SD card in, the screen keeps the last layout and tile states on it.
 After a restart the dashboard appears right away, before Home Assistant
@@ -134,7 +138,8 @@ uvx esptool --port /dev/cu.usbserial-XXXX --baud 230400 write-flash 0 backup/fac
 Development builds (the default `dev-console` feature) read commands on the
 serial port: `tap X Y [MS]`, `type TEXT`, `key enter`, `key back`, `shot`,
 `status`, `sd`, `sdformat ERASE`, `sdcopyslot`, `saver`, `bench`,
-`flipshot MS`, `page NAME`, `forget`, `reboot`. `src/console.rs` describes
+`flipshot MS`, `page NAME`, `doorbell URL` (shows any MJPEG stream as if the
+doorbell rang), `forget`, `reboot`. `src/console.rs` describes
 each one. Logging pauses while `shot` sends a screenshot, so events during
 those few seconds don't show in the log. Release images leave the console out, so anyone with a USB cable
 can't drive the screen.
@@ -196,6 +201,14 @@ and can stay up for a number of seconds or until it is dismissed with
 `esp32_screen.dismiss`. For example, a doorbell automation can send the
 camera picture with a 60 s timeout.
 
+**Doorbell.** Under **Screen settings › Doorbell**, pick what rings (an
+`event.*` such as a doorbell's ring event, or a `binary_sensor.*`), the camera,
+optionally a button for the doorbell screen (a lock, gate cover, switch, button
+or script, for example to open the gate), and how long the camera stays up.
+The `esp32_screen.ring` action shows it as if it rang, for testing or for
+doorbells without a ring entity. See [`docs/protocol.md`](docs/protocol.md)
+section 9.
+
 **Firmware updates.** Copy a firmware image (`.bin`, project `esp32-screen`) into
 `<HA config>/esp32_screen/firmware/`. Within a minute every screen's
 *Firmware* update entity offers the highest version in that folder. Install it
@@ -208,7 +221,7 @@ images can stay in the folder. Remove an image to stop offering it. See
 ### Development
 
 ```sh
-homeassistant/dev/run-ha.sh                                  # HA in Docker, port 8123, demo entities
+homeassistant/dev/run-ha.sh                                  # HA in Docker, port 8123, demo entities, test RTSP doorbell camera
 uv run --with aiohttp homeassistant/dev/onboard.py           # owner + non-admin screen user, random passwords
 uv run --with aiohttp homeassistant/tests/e2e.py             # protocol end-to-end test (uses device_sim.py)
 uv run --with aiohttp homeassistant/tests/device_sim.py --interactive   # simulated screen AABBCCDDEEFF

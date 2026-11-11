@@ -336,6 +336,7 @@ fn main() -> anyhow::Result<()> {
                     }
                     None => println!("SDFORMAT no card mounted"),
                 },
+                ConsoleCommand::Doorbell(url) => app.test_doorbell(url),
                 ConsoleCommand::Page(name) => {
                     let page = match name.as_str() {
                         "welcome" => Some(Page::Welcome),

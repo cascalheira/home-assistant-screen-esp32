@@ -626,3 +626,70 @@ shows a card with the picture, title and message. A tap anywhere closes it, and
 so do the timeout and `dismiss`. The screen decodes the picture with the JPEG
 decoder in the ESP32-S3's ROM, which reads baseline JPEGs only. If the picture
 can't be downloaded or decoded, or memory is short, the card shows without it.
+
+## 9. Doorbell
+
+When the doorbell rings, the screen wakes and shows its camera live.
+
+### Settings
+
+Per screen, with the settings of section 7 (`esp32_screen/screen/update`):
+
+| setting | values | default |
+|---|---|---|
+| `doorbell_entity` | `""` or an `event.*` / `binary_sensor.*` entity: what rings | `""` |
+| `doorbell_camera` | `""` or a `camera.*` entity | `""` |
+| `doorbell_action` | `""` or a `lock`, `cover`, `switch`, `button`, `input_button` or `script` entity: a button on the doorbell screen | `""` |
+| `doorbell_timeout` | seconds the camera stays up, 10-600 | `60` |
+
+A ring is a state change of `doorbell_entity`: for an `event.*`, a new state
+(the time it fired), except when it comes back from `unavailable` (a restart);
+for a `binary_sensor.*`, `off` → `on`. The `esp32_screen.ring` action
+(optional `device_id`) rings on screens that have a doorbell set up, for
+doorbells without such an entity or for testing. It returns
+`{"screens": [<screen_id>...]}`.
+
+### `doorbell` event
+
+Sent to every online screen whose `doorbell_entity` rang:
+
+```json
+{"kind":"doorbell","id":"9f1c2a7b3e4d5f60","title":"Front door",
+ "stream_url":"/api/esp32_screen/doorbell/9f1c2a7b3e4d5f60.mjpeg",
+ "timeout":60,"action":"Front gate"}
+```
+
+- **`title`.** The camera's name, else `Doorbell`.
+- **`stream_url`.** `""` without a camera.
+- **`action`.** The name of `doorbell_action`, `""` without one (no button).
+
+### The stream
+
+`GET <HA base URL><stream_url>` with `Authorization: Bearer <access token>`
+returns `multipart/x-mixed-replace;boundary=frame`: baseline JPEGs of at most
+512×384 (aspect ratio kept), about 6 a second. HA makes them with ffmpeg from
+the camera's stream source (RTSP: over TCP); a camera without a stream source
+gives snapshots twice a second instead. The stream ends `timeout` seconds after
+the ring, or when the screen closes the connection, which also stops ffmpeg.
+It can be opened until 10 s after the timeout; then `404`. Without a valid token,
+`401`.
+
+### `esp32_screen/doorbell_action` (screen → HA)
+
+```json
+{"type":"esp32_screen/doorbell_action","screen_id":"A0B1C2D3E4F5","ring_id":"9f1c2a7b3e4d5f60"}
+```
+
+Runs `doorbell_action`: `lock.unlock`, `cover.open_cover`, `switch.turn_on`,
+`button.press`, `input_button.press` or `script.turn_on`. Result `null`; a
+ring that is over, no action set, or a failing service gives `service_failed`.
+
+### On the screen
+
+The screen wakes and shows the video full screen, with the title, the action
+button and **Close**. It closes after `timeout` or on **Close**, which also
+hangs up the stream. A new ring replaces the one showing. The ROM JPEG decoder
+takes about 140 ms per 512×288 frame and the UI about 130 ms to draw it, so
+the video runs at about 3-4 frames a second. The screen decodes only the
+newest frame and only once the previous one is on screen, into two buffers it
+reuses, so the video never needs more than two frames of memory.

@@ -104,6 +104,16 @@
           "description": "ID returned by the notify action. Leave empty to close any notification."
         }
       }
+    },
+    "ring": {
+      "name": "Ring the doorbell",
+      "description": "Shows the doorbell camera on screens that have a doorbell set up, as if it rang.",
+      "fields": {
+        "device_id": {
+          "name": "Screens",
+          "description": "Screens to ring on. All of them when left empty."
+        }
+      }
     }
   }
 }

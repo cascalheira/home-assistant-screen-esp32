@@ -128,6 +128,11 @@ struct State {
     /// tapped or dismissed).
     notify_id: Option<String>,
     notify_until: Option<Instant>,
+    /// The doorbell ring on screen ("" for a console test) and when it closes.
+    doorbell_ring: Option<String>,
+    doorbell_until: Option<Instant>,
+    /// Last time the doorbell video kept the screen awake.
+    doorbell_woke: Option<Instant>,
 }
 
 impl State {
@@ -225,6 +230,9 @@ impl App {
                 sheet_touched: None,
                 notify_id: None,
                 notify_until: None,
+                doorbell_ring: None,
+                doorbell_until: None,
+                doorbell_woke: None,
             }),
         });
 
@@ -286,6 +294,31 @@ impl App {
                     self.shared.st.borrow_mut().forecast = forecast;
                     self.shared.show_forecast();
                 }
+                ha::Event::Doorbell { .. } => {
+                    self.screen_commands
+                        .borrow_mut()
+                        .push(crate::saver::ScreenCommand::Attention);
+                    self.shared.on_ha_event(event);
+                }
+                ha::Event::DoorbellFrame(_) => {
+                    // Keep the screen awake while the video plays.
+                    let wake = {
+                        let mut st = self.shared.st.borrow_mut();
+                        let due = st
+                            .doorbell_woke
+                            .is_none_or(|at| at.elapsed() >= Duration::from_secs(5));
+                        if due {
+                            st.doorbell_woke = Some(Instant::now());
+                        }
+                        due
+                    };
+                    if wake {
+                        self.screen_commands
+                            .borrow_mut()
+                            .push(crate::saver::ScreenCommand::Wake);
+                    }
+                    self.shared.on_ha_event(event);
+                }
                 ha::Event::Notify { .. } => {
                     // Wake the screen (and its backlight) for it.
                     self.screen_commands
@@ -319,6 +352,11 @@ impl App {
     /// True once after each (re)subscription to Home Assistant.
     pub fn take_resubscribed(&self) -> bool {
         self.resubscribed.replace(false)
+    }
+
+    /// Debug console: show a video from `url` as if the doorbell rang.
+    pub fn test_doorbell(&self, url: String) {
+        self.shared.ha.send(ha::Command::DoorbellTest(url));
     }
 
     pub fn report_state(&self, state: crate::saver::ScreenState) {
@@ -379,6 +417,16 @@ impl Shared {
         // ---- Wi-Fi wizard
         on!(on_start_setup, |s| s.show_networks());
         on!(on_notify_closed, |s| s.close_notification());
+        on!(on_doorbell_closed, |s| s.close_doorbell());
+        on!(on_doorbell_action_pressed, |s| {
+            let ring = s.st.borrow().doorbell_ring.clone();
+            if let Some(ring) = ring.filter(|r| !r.is_empty()) {
+                if let Some(ui) = s.ui() {
+                    ui.set_doorbell_action_state(1);
+                }
+                s.ha.send(ha::Command::DoorbellAction(ring));
+            }
+        });
         on!(on_rescan, |s| s.wifi.send(Command::Scan));
         on!(on_choose_network, |s, item| {
             {
@@ -1127,6 +1175,64 @@ impl Shared {
                 st.notify_until =
                     (timeout_secs > 0).then(|| Instant::now() + Duration::from_secs(timeout_secs));
             }
+            ha::Event::Doorbell {
+                ring_id,
+                title,
+                timeout_secs,
+                action,
+                has_video,
+            } => {
+                log::info!("doorbell: {title}");
+                {
+                    let mut st = self.st.borrow_mut();
+                    st.doorbell_ring = Some(ring_id);
+                    st.doorbell_until = Some(Instant::now() + Duration::from_secs(timeout_secs));
+                }
+                ui.set_climate_open(false);
+                ui.set_dimmer_open(false);
+                ui.set_sheet_open(false);
+                ui.set_doorbell_title(title.into());
+                ui.set_doorbell_action(action.into());
+                ui.set_doorbell_action_state(0);
+                ui.set_doorbell_frame(slint::Image::default());
+                ui.set_doorbell_has_frame(false);
+                ui.set_doorbell_status(
+                    if has_video {
+                        "Connecting to the camera…"
+                    } else {
+                        ""
+                    }
+                    .into(),
+                );
+                ui.set_doorbell_open(true);
+            }
+            ha::Event::DoorbellFrame(picture) => {
+                if self.st.borrow().doorbell_ring.is_some() {
+                    ui.set_doorbell_frame(slint::Image::from_rgb8(picture));
+                    ui.set_doorbell_has_frame(true);
+                    ui.set_doorbell_status("".into());
+                }
+                ha::DOORBELL_FRAME_SHOWN.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            ha::Event::DoorbellVideoLost(reason) => {
+                if self.st.borrow().doorbell_ring.is_some() {
+                    log::warn!("doorbell video lost: {reason}");
+                    ui.set_doorbell_status(
+                        if ui.get_doorbell_has_frame() {
+                            "The video stopped"
+                        } else {
+                            "No video from the camera"
+                        }
+                        .into(),
+                    );
+                }
+            }
+            ha::Event::DoorbellActionDone(ok, message) => {
+                ui.set_doorbell_action_state(if ok { 2 } else { 3 });
+                if !ok {
+                    ui.set_doorbell_status(message.into());
+                }
+            }
             ha::Event::Dismiss(id) => {
                 let showing = self.st.borrow().notify_id.clone();
                 if showing.is_some_and(|showing| id.is_empty() || showing == id) {
@@ -1606,6 +1712,23 @@ impl Shared {
         self.refresh_popups();
     }
 
+    fn close_doorbell(&self) {
+        let was_open = {
+            let mut st = self.st.borrow_mut();
+            st.doorbell_until = None;
+            st.doorbell_ring.take().is_some()
+        };
+        if was_open {
+            self.ha.send(ha::Command::DoorbellClose);
+        }
+        if let Some(ui) = self.ui() {
+            ui.set_doorbell_open(false);
+            // Free the frame.
+            ui.set_doorbell_frame(slint::Image::default());
+            ui.set_doorbell_has_frame(false);
+        }
+    }
+
     fn close_notification(&self) {
         {
             let mut st = self.st.borrow_mut();
@@ -1630,6 +1753,14 @@ impl Shared {
             .is_some_and(|until| now >= until);
         if expired {
             self.close_notification();
+        }
+        let doorbell_over = self
+            .st
+            .borrow()
+            .doorbell_until
+            .is_some_and(|until| now >= until);
+        if doorbell_over {
+            self.close_doorbell();
         }
         let mut send = None;
         let mut refresh = false;

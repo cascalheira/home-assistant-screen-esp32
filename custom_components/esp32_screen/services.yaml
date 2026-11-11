@@ -42,3 +42,12 @@ dismiss:
     id:
       selector:
         text:
+
+ring:
+  fields:
+    device_id:
+      selector:
+        device:
+          multiple: true
+          filter:
+            integration: esp32_screen

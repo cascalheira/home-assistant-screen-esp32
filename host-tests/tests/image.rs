@@ -36,3 +36,20 @@ fn full_width_fields_without_terminator() {
     let (project, version) = descriptor(&h).unwrap();
     assert_eq!((project.len(), version.len()), (32, 32));
 }
+
+#[test]
+fn take_jpeg_splits_a_multipart_stream() {
+    use esp32_screen_host_tests::logic::image::take_jpeg;
+    let jpeg = |n: u8| vec![0xFF, 0xD8, n, 0xFF, 0x00, n, 0xFF, 0xD9];
+    let mut buf = b"--frame\r\nContent-Type: image/jpeg\r\n\r\n".to_vec();
+    buf.extend(jpeg(1));
+    buf.extend_from_slice(b"\r\n--frame\r\nContent-Type: image/jpeg\r\n\r\n");
+    buf.extend(&jpeg(2)[..4]); // second frame not complete yet
+    assert_eq!(take_jpeg(&mut buf), Some(jpeg(1)));
+    assert_eq!(take_jpeg(&mut buf), None);
+    buf.extend(&jpeg(2)[4..]);
+    assert_eq!(take_jpeg(&mut buf), Some(jpeg(2)));
+    assert!(buf.is_empty());
+    let mut none = b"no jpeg here".to_vec();
+    assert_eq!(take_jpeg(&mut none), None);
+}
