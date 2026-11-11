@@ -371,6 +371,16 @@ class Esp32ScreenPanel extends HTMLElement {
       if (humidity != null) view.detail = view.detail ? `${view.detail} · ${Math.round(humidity)}%` : `${Math.round(humidity)}%`;
       if (a.temperature != null) view.value = `${fmt(a.temperature)} ${unit}`;
       view.heat = st.state === "heat" || a.hvac_action === "heating";
+      // As the screen lays it out (TileView in ui/dashboard.slint).
+      const deg = (n) => {
+        const r = Math.round(Number(n) * 10) / 10;
+        return `${Number.isInteger(r) ? r : r.toFixed(1)}°`;
+      };
+      view.climate = {
+        big: current != null ? deg(current) : a.temperature != null ? deg(a.temperature) : "",
+        target: st.state !== "off" && current != null && a.temperature != null ? deg(a.temperature) : "",
+        humidity: humidity != null ? `${Math.round(humidity)}%` : "",
+      };
     } else {
       view.status = cap(st.state);
     }
@@ -737,10 +747,14 @@ class Esp32ScreenPanel extends HTMLElement {
           <div class="tile ${v.on ? "on" : ""} ${v.available ? "" : "unavailable"} ${v.missing ? "missing" : ""} ${t.id === this._selTile ? "selected" : ""}"
                style="${pos(t)};--tile-accent:${color}" data-tile-id="${esc(t.id)}">
             <div class="tile-inner">
+              ${v.climate && v.available ? `
+              <div class="tile-top"><ha-icon icon="${v.icon || kind.icon}"></ha-icon><span class="tile-name climate-name">${esc(v.name)}</span></div>
+              <div class="climate-now"><span class="climate-big">${esc(v.climate.big)}</span>${v.climate.target ? `<span class="climate-target">→ ${esc(v.climate.target)}</span>` : ""}</div>
+              <div class="tile-status climate-bottom"><span class="climate-status">${esc(v.status)}</span>${v.climate.humidity ? `<span class="climate-humidity"><ha-icon icon="mdi:water"></ha-icon>${esc(v.climate.humidity)}</span>` : ""}</div>` : `
               <div class="tile-top"><ha-icon icon="${v.icon || kind.icon}"></ha-icon><span class="tile-kind">${esc(kind.label)}</span></div>
               <div class="tile-name">${esc(v.name)}</div>
               ${v.value && t.h >= 2 ? `<div class="tile-value">${esc(v.value)}</div>` : ""}
-              <div class="tile-status">${esc(v.status)}${v.detail ? ` · <span class="tile-detail">${esc(v.detail)}</span>` : ""}</div>
+              <div class="tile-status">${esc(v.status)}${v.detail ? ` · <span class="tile-detail">${esc(v.detail)}</span>` : ""}</div>`}
               ${t.kind === "light" && t.inline ? `<div class="tile-bars">${t.inline.includes("brightness") ? `<span class="bar bright"></span>` : ""}${t.inline.includes("color") ? `<span class="bar hue"></span>` : ""}</div>` : ""}
             </div>
             <div class="handle" data-handle="${esc(t.id)}" title="Drag to resize"></div>
@@ -1565,6 +1579,15 @@ const STYLE = `
   .tile-name { font-size: clamp(10px, 16cqh, 18px); font-weight: 500; line-height: 1.2; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; flex: none; }
   .tile-status { font-size: clamp(10px, 14cqh, 14px); color: #aab2bf; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: auto; flex: none; }
   .tile-detail { color: #e8eaed; }
+  .climate-name { -webkit-line-clamp: 1; color: inherit; }
+  .tile-top .climate-name { color: #e8ebf0; }
+  .climate-now { display: flex; align-items: baseline; gap: 8px; margin: auto 0; min-width: 0; }
+  .climate-big { font-size: clamp(18px, 30cqh, 44px); font-weight: 500; line-height: 1; white-space: nowrap; }
+  .climate-target { font-size: clamp(10px, 14cqh, 16px); color: #aab2bf; white-space: nowrap; }
+  .climate-bottom { display: flex; justify-content: space-between; gap: 6px; }
+  .tile.on .climate-status { color: var(--tile-accent); font-weight: 600; }
+  .climate-humidity { display: inline-flex; align-items: center; gap: 2px; }
+  .climate-humidity ha-icon { --mdc-icon-size: 1em; color: #aab2bf; }
   .tile-value { font-size: clamp(16px, 22cqh, 44px); font-weight: 300; margin: auto 0; line-height: 1; }
   @container tile (max-height: 70px) {
     .tile-kind { display: none; }

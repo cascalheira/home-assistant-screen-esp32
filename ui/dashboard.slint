@@ -312,7 +312,94 @@ export component TileView inherits Rectangle {
     border-width: root.tile.on && root.tile.available ? 2px : 0px;
     border-color: root.tint.with-alpha(0.55);
 
-    if !root.controls: VerticalLayout {
+    property <bool> climate: root.tile.kind == "climate" && root.tile.available;
+    // The big number: the room's temperature, else the target.
+    property <string> climate-big: root.tile.current != "" ? root.tile.current : root.tile.target;
+    property <bool> climate-roomy: root.height >= 180px && root.width >= 300px;
+
+    // Climate: mode icon and name on top; the room temperature big with the
+    // target beside it; the mode and the humidity below.
+    if root.climate: VerticalLayout {
+        padding: 14px;
+        padding-top: 12px;
+        spacing: 0px;
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                text: root.glyph;
+                font-family: Icons.family;
+                font-size: 26px;
+                color: root.tile.on ? root.ink : Theme.muted;
+                vertical-alignment: center;
+            }
+            Text {
+                text: root.tile.label;
+                font-size: 17px;
+                font-weight: 600;
+                color: Theme.text;
+                overflow: elide;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+        }
+        Rectangle { vertical-stretch: 1; }
+        // Bigger where there is room (two conditional texts: a ternary
+        // between two font sizes trips the Xtensa compiler).
+        HorizontalLayout {
+            spacing: 10px;
+            if !root.climate-roomy: Text {
+                text: root.climate-big;
+                font-size: 38px;
+                font-weight: 600;
+                color: Theme.text;
+            }
+            if root.climate-roomy: Text {
+                text: root.climate-big;
+                font-size: 48px;
+                font-weight: 600;
+                color: Theme.text;
+            }
+            // The target beside it; not when off, where it doesn't matter.
+            if root.tile.mode != "off" && root.tile.current != "" && root.tile.target != "": Text {
+                text: "→ " + root.tile.target;
+                font-size: 17px;
+                color: Theme.muted;
+                vertical-alignment: center;
+            }
+            Rectangle { horizontal-stretch: 1; }
+        }
+        Rectangle { vertical-stretch: 1; }
+        HorizontalLayout {
+            spacing: 6px;
+            Text {
+                text: root.tile.status;
+                font-size: 15px;
+                font-weight: 600;
+                color: root.tile.on ? root.ink : Theme.muted;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            if root.tile.humidity != "": HorizontalLayout {
+                spacing: 2px;
+                Text {
+                    text: "\u{F058C}";
+                    font-family: Icons.family;
+                    font-size: 15px;
+                    color: Theme.muted;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: root.tile.humidity;
+                    font-size: 15px;
+                    color: Theme.muted;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+
+    if !root.controls && !root.climate: VerticalLayout {
         padding: 14px;
         spacing: 2px;
         HorizontalLayout {

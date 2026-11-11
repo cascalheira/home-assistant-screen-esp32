@@ -214,7 +214,7 @@ async def main() -> int:
             await temp_select.select_option("sensor.living_room_temperature")
             await hum_select.select_option("sensor.living_room_humidity")
             hvac_text = await panel.locator(".tile", has_text="Hvac").inner_text()
-            check("23.4 °C" in hvac_text and "47%" in hvac_text, "tile preview uses the sensors (temperature + humidity)", " ".join(hvac_text.split()))
+            check("23.4°" in hvac_text and "47%" in hvac_text, "tile preview uses the sensors (temperature + humidity)", " ".join(hvac_text.split()))
             await page.screenshot(path="/tmp/ha-editor-9-climate-sensors.png")
 
             # Toggle tile.

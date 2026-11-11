@@ -1944,6 +1944,12 @@ fn tile_data(tile: &Tile, state: Option<&TileState>) -> TileData {
             s.mode.as_str().into()
         },
         value: big_value(tile, s).into(),
+        current: climate_text(tile, s, |s| s.current.map(crate::logic::climate::current)).into(),
+        target: climate_text(tile, s, |s| {
+            s.target.map(|t| crate::logic::climate::target(t, s.step))
+        })
+        .into(),
+        humidity: climate_text(tile, s, |s| s.humidity.map(|h| format!("{h:.0}%"))).into(),
         icon: if tile.kind == "light" {
             crate::icons::light_glyph(&tile.icon).into()
         } else {
@@ -1972,6 +1978,14 @@ fn light_color(s: &TileState) -> Option<slint::Color> {
 
 /// Large value for climate and sensor tiles; the UI shows it on tall tiles
 /// only.
+/// A piece of a climate tile's text; "" on other tiles or when unknown.
+fn climate_text(tile: &Tile, s: &TileState, f: impl Fn(&TileState) -> Option<String>) -> String {
+    if tile.kind != "climate" || !s.available {
+        return String::new();
+    }
+    f(s).unwrap_or_default()
+}
+
 fn big_value(tile: &Tile, s: &TileState) -> String {
     if !s.available {
         return String::new();

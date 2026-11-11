@@ -34,6 +34,10 @@ export struct TileData {
     mode: string, // climate hvac mode
     value: string, // large text on tall climate tiles, e.g. "23.5°"
     icon: string, // glyph chosen in the editor, "" for the kind's own icon
+    // Climate: room temperature "18.8°", target "24°", humidity "75%" ("" = unknown).
+    current: string,
+    target: string,
+    humidity: string,
     // Light: sliders on the tile, their values, and the light's own colour.
     ctl-brightness: bool,
     ctl-hue: bool,
