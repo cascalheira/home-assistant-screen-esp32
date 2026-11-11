@@ -33,9 +33,11 @@ Assistant.
    Wi-Fi signal next to the gear icon, which opens settings: change or forget
    Wi-Fi, sign out of Home Assistant, and the screensaver.
 4. **Screensaver (optional).** A plain clock or a flip clock with the date,
-   after 1, 5 or 15 minutes without touches on the dashboard, with the
-   backlight dimmed. It can show the weather and an indoor temperature, in
-   English or Portuguese, with a 12- or 24-hour clock. The touch that wakes
+   a 7-day weather forecast, or both taking turns every 10, 20, 30 or 60
+   seconds. It starts after 1, 5 or 15 minutes without touches on the
+   dashboard, with the backlight dimmed. The clock can show the weather and
+   an indoor temperature, in English or Portuguese, with a 12- or 24-hour
+   clock. The forecast comes from the weather entity picked for the screen. The touch that wakes
    the screen doesn't press anything. Time comes from NTP and the timezone
    from Home Assistant. Backlight and screensaver can also be controlled from
    Home Assistant.
@@ -242,7 +244,9 @@ image, which it keeps as a build artifact.
 - **Fonts.** Inter (SIL Open Font License) and Material Design Icons
   (Pictogrammers Free License), see `ui/fonts/`. Glyphs are embedded as
   signed distance fields: one per character, scaled to any font size, so
-  sizes cost no flash. Bitmaps per size took about 1.7 MB more and redrew
+  sizes cost almost no flash. But the fields are made at the largest size
+  used per font, so keep text and icons at 48 px or less: one 76 px icon and
+  56 px text cost about 465 KB. Bitmaps per size took about 1.7 MB more and redrew
   only 5-10% faster. Text covers ASCII and Latin-1, which includes Portuguese
   accents. Other scripts in names or SSIDs show missing glyphs. To add
   characters, extend the `glyph-coverage` text in `ui/app.slint`.

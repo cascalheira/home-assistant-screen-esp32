@@ -15,6 +15,38 @@ pub fn digits(hour: i32, minute: i32, h24: bool) -> [i32; 4] {
     [first, hour % 10, minute / 10, minute % 10]
 }
 
+/// "14:05", or "2:05 PM" on a 12-hour clock.
+pub fn time_text(hour: i32, minute: i32, h24: bool) -> String {
+    if h24 {
+        format!("{hour:02}:{minute:02}")
+    } else {
+        let h = match hour % 12 {
+            0 => 12,
+            h => h,
+        };
+        let half = if hour < 12 { "AM" } else { "PM" };
+        format!("{h}:{minute:02} {half}")
+    }
+}
+
+/// Short day name for a forecast column: "Mon" / "Seg". `weekday` 0 = Sunday.
+pub fn weekday_short(weekday: i32, portuguese: bool) -> &'static str {
+    let names = if portuguese {
+        ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"]
+    } else {
+        ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    };
+    names.get(weekday as usize).copied().unwrap_or("")
+}
+
+pub fn today(portuguese: bool) -> &'static str {
+    if portuguese {
+        "Hoje"
+    } else {
+        "Today"
+    }
+}
+
 /// Calendar fields as in C's `struct tm`.
 #[derive(Clone, Copy, Debug)]
 pub struct Date {

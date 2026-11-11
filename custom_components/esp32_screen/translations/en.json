@@ -21,7 +21,7 @@
         "name": "Wake"
       },
       "show_clock": {
-        "name": "Show clock"
+        "name": "Show screensaver"
       }
     },
     "light": {
@@ -36,17 +36,31 @@
     },
     "select": {
       "screensaver": {
-        "name": "Screensaver",
+        "name": "Screensaver clock",
         "state": {
           "off": "Off",
           "clock": "Clock",
           "flip": "Flip clock"
+        }
+      },
+      "screensaver_rotate": {
+        "name": "Screensaver switch every",
+        "state": {
+          "10": "10 s",
+          "20": "20 s",
+          "30": "30 s",
+          "60": "60 s"
         }
       }
     },
     "update": {
       "firmware": {
         "name": "Firmware"
+      }
+    },
+    "switch": {
+      "screensaver_weather": {
+        "name": "Weather forecast screensaver"
       }
     }
   },

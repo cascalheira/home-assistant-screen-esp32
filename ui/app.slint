@@ -6,14 +6,14 @@
 import "fonts/Inter-Regular.ttf";
 import "fonts/Inter-SemiBold.ttf";
 import { Theme } from "theme.slint";
-import { NetworkItem, InstanceItem, PageTab, TileData, ModeItem, ActionButton } from "types.slint";
+import { NetworkItem, InstanceItem, PageTab, TileData, ModeItem, ActionButton, ForecastDayView } from "types.slint";
 import {
     Button, SignalBars, LoadingDots, Badge, StepChip, Header, NetworkRow, Keyboard, EntryField, InfoRow, Segmented
 } from "widgets.slint";
 import { Icons, TileView, ClimateSheet, DimmerSheet, ActionSheet } from "dashboard.slint";
-import { ScreenSaver } from "clock.slint";
+import { ScreenSaver, ForecastView } from "clock.slint";
 
-export { NetworkItem, InstanceItem, PageTab, TileData, ModeItem, ActionButton }
+export { NetworkItem, InstanceItem, PageTab, TileData, ModeItem, ActionButton, ForecastDayView }
 
 export enum Page { welcome, networks, entry, connecting, result, ha-find, dashboard, settings }
 
@@ -216,6 +216,13 @@ export component AppWindow inherits Window {
     in property <int> saver-delay; // index into the delay options
     in property <bool> saver-active;
     in property <bool> saver-flip;
+    in property <bool> saver-weather; // forecast screensaver on
+    in property <int> saver-rotate; // index into the rotation options
+    in property <int> saver-view; // 0 clock, 1 forecast
+    in property <string> clock-time; // "14:05", for the forecast view
+    in property <[ForecastDayView]> forecast-days;
+    in property <string> forecast-title; // shown when there are no days
+    in property <string> forecast-hint;
     in property <string> clock-weather-condition;
     in property <string> clock-weather-temperature;
     in property <string> clock-indoor-temperature;
@@ -273,6 +280,8 @@ export component AppWindow inherits Window {
     callback ha-sign-out();
     callback saver-mode-picked(int);
     callback saver-delay-picked(int);
+    callback saver-weather-picked(int);
+    callback saver-rotate-picked(int);
 
     // Never set. Its only job is to make the glyph embedder include these
     // characters (Latin-1 for accented names, plus symbols HA sends such as
@@ -939,46 +948,77 @@ export component AppWindow inherits Window {
                     }
                 }
             }
-            // Screensaver card
+            // Screensaver card: the clock and its delay, then the forecast
+            // and how often the two take turns.
             HorizontalLayout {
                 padding-left: 20px;
                 padding-right: 20px;
                 padding-top: 14px;
                 Rectangle {
-                    height: 76px;
+                    height: 128px;
                     border-radius: 16px;
                     background: Theme.surface;
-                    HorizontalLayout {
+                    VerticalLayout {
                         padding-left: 18px;
                         padding-right: 16px;
-                        spacing: 14px;
-                        alignment: space-between;
-                        VerticalLayout {
-                            alignment: center;
+                        padding-top: 10px;
+                        padding-bottom: 10px;
+                        spacing: 10px;
+                        HorizontalLayout {
+                            spacing: 14px;
+                            VerticalLayout {
+                                alignment: center;
+                                Text {
+                                    text: "Screensaver";
+                                    font-size: 20px;
+                                    font-weight: 600;
+                                    color: Theme.text;
+                                }
+                                Text {
+                                    text: root.saver-mode == 0 && !root.saver-weather ? "Off" : "Starts when idle";
+                                    font-size: 14px;
+                                    color: Theme.muted;
+                                }
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                            Segmented {
+                                options: ["Off", "Clock", "Flip clock"];
+                                selected: root.saver-mode;
+                                picked(i) => { root.saver-mode-picked(i); }
+                            }
+                            Segmented {
+                                options: ["1 min", "5 min", "15 min"];
+                                selected: root.saver-delay;
+                                enabled: root.saver-mode != 0 || root.saver-weather;
+                                picked(i) => { root.saver-delay-picked(i); }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: 14px;
                             Text {
-                                text: "Screensaver";
-                                font-size: 20px;
-                                font-weight: 600;
+                                text: "Weather forecast";
+                                font-size: 16px;
                                 color: Theme.text;
+                                vertical-alignment: center;
                             }
+                            Segmented {
+                                options: ["Off", "7 days"];
+                                selected: root.saver-weather ? 1 : 0;
+                                picked(i) => { root.saver-weather-picked(i); }
+                            }
+                            Rectangle { horizontal-stretch: 1; }
                             Text {
-                                text: root.saver-mode == 0 ? "Off" : "Starts when idle";
-                                font-size: 14px;
-                                color: Theme.muted;
+                                text: "Switch every";
+                                font-size: 16px;
+                                color: root.saver-weather && root.saver-mode != 0 ? Theme.text : Theme.muted;
+                                vertical-alignment: center;
                             }
-                        }
-                        Segmented {
-                            y: 16px;
-                            options: ["Off", "Clock", "Flip clock"];
-                            selected: root.saver-mode;
-                            picked(i) => { root.saver-mode-picked(i); }
-                        }
-                        Segmented {
-                            y: 16px;
-                            options: ["1 min", "5 min", "15 min"];
-                            selected: root.saver-delay;
-                            enabled: root.saver-mode != 0;
-                            picked(i) => { root.saver-delay-picked(i); }
+                            Segmented {
+                                options: ["10 s", "20 s", "30 s", "60 s"];
+                                selected: root.saver-rotate;
+                                enabled: root.saver-weather && root.saver-mode != 0;
+                                picked(i) => { root.saver-rotate-picked(i); }
+                            }
                         }
                     }
                 }
@@ -1051,7 +1091,17 @@ export component AppWindow inherits Window {
 
     // ---- Screensaver: above everything. Touches never reach it; Rust
     // swallows the waking touch.
-    if root.saver-active: ScreenSaver {
+    if root.saver-active && root.saver-view == 1: ForecastView {
+        days: root.forecast-days;
+        time: root.clock-time;
+        date: root.clock-date;
+        weather-condition: root.clock-weather-condition;
+        weather-temperature: root.clock-weather-temperature;
+        indoor-temperature: root.clock-indoor-temperature;
+        title: root.forecast-title;
+        hint: root.forecast-hint;
+    }
+    if root.saver-active && root.saver-view == 0: ScreenSaver {
         flip: root.saver-flip;
         weather-condition: root.clock-weather-condition;
         weather-temperature: root.clock-weather-temperature;

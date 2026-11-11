@@ -6,6 +6,7 @@
 // alpha maps and can be scaled, which the flip animation relies on.
 
 import { Icons } from "dashboard.slint";
+import { ForecastDayView } from "types.slint";
 
 export global ClockGlyphs {
     // Weather condition (HA's state of a weather entity) -> icon.
@@ -290,6 +291,167 @@ export component ScreenSaver inherits Rectangle {
                     color: #8b93a3;
                     vertical-alignment: center;
                 }
+            }
+        }
+    }
+}
+
+// The 7-day forecast screensaver: now (weather, indoor temperature, time)
+// on top, a column per day below. No font sizes above 48 px: Slint makes
+// every glyph's distance field at the largest size used, which cost about
+// 465 KB of flash and PSRAM with 56 and 76 px here.
+export component ForecastView inherits Rectangle {
+    in property <[ForecastDayView]> days;
+    in property <string> time;
+    in property <string> date;
+    in property <string> weather-condition;
+    in property <string> weather-temperature;
+    in property <string> indoor-temperature;
+    // Shown instead of the days when there are none.
+    in property <string> title;
+    in property <string> hint;
+
+    property <color> ink: #e9ecf2;
+    property <color> muted: #8b93a3;
+
+    background: #000000;
+
+    VerticalLayout {
+        padding: 32px;
+        padding-top: 26px;
+        spacing: 22px;
+        HorizontalLayout {
+            spacing: 18px;
+            if root.weather-temperature != "": Text {
+                text: ClockGlyphs.weather-icon(root.weather-condition);
+                font-family: Icons.family;
+                font-size: 48px;
+                color: root.ink;
+                vertical-alignment: center;
+            }
+            VerticalLayout {
+                alignment: center;
+                if root.weather-temperature != "": Text {
+                    text: root.weather-temperature;
+                    font-size: 48px;
+                    font-weight: 600;
+                    color: root.ink;
+                }
+                if root.indoor-temperature != "": HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        text: "\u{F0F54}";
+                        font-family: Icons.family;
+                        font-size: 22px;
+                        color: root.muted;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: root.indoor-temperature;
+                        font-size: 22px;
+                        color: root.muted;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    text: root.time;
+                    font-size: 48px;
+                    font-weight: 600;
+                    color: root.ink;
+                    horizontal-alignment: right;
+                }
+                Text {
+                    text: root.date;
+                    font-size: 20px;
+                    color: root.muted;
+                    horizontal-alignment: right;
+                }
+            }
+        }
+        if root.days.length > 0: HorizontalLayout {
+            spacing: 10px;
+            vertical-stretch: 1;
+            for day[i] in root.days: Rectangle {
+                horizontal-stretch: 1;
+                border-radius: 16px;
+                background: i == 0 ? #161a22 : #0e1116;
+                VerticalLayout {
+                    padding-top: 16px;
+                    padding-bottom: 14px;
+                    spacing: 6px;
+                    Text {
+                        text: day.name;
+                        font-size: 20px;
+                        font-weight: 600;
+                        color: i == 0 ? root.ink : root.muted;
+                        horizontal-alignment: center;
+                    }
+                    Rectangle { vertical-stretch: 1; }
+                    Text {
+                        text: ClockGlyphs.weather-icon(day.condition);
+                        font-family: Icons.family;
+                        font-size: 48px;
+                        color: root.ink;
+                        horizontal-alignment: center;
+                    }
+                    Rectangle { vertical-stretch: 1; }
+                    Text {
+                        text: day.high;
+                        font-size: 30px;
+                        font-weight: 600;
+                        color: root.ink;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: day.low;
+                        font-size: 22px;
+                        color: root.muted;
+                        horizontal-alignment: center;
+                    }
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 3px;
+                        height: 24px;
+                        if day.precipitation != "": Text {
+                            text: "\u{F058C}";
+                            font-family: Icons.family;
+                            font-size: 16px;
+                            color: #60a5fa;
+                            vertical-alignment: center;
+                        }
+                        if day.precipitation != "": Text {
+                            text: day.precipitation;
+                            font-size: 16px;
+                            color: #60a5fa;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+        if root.days.length == 0: VerticalLayout {
+            vertical-stretch: 1;
+            alignment: center;
+            spacing: 12px;
+            padding-left: 60px;
+            padding-right: 60px;
+            Text {
+                text: root.title;
+                font-size: 28px;
+                font-weight: 600;
+                color: root.ink;
+                horizontal-alignment: center;
+            }
+            Text {
+                text: root.hint;
+                font-size: 18px;
+                color: root.muted;
+                wrap: word-wrap;
+                horizontal-alignment: center;
             }
         }
     }

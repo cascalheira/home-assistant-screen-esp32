@@ -119,6 +119,8 @@ pub enum Event {
         weather: String,
         indoor: String,
     },
+    /// Daily forecast for the screensaver (section 7).
+    Forecast(model::Forecast),
     /// Show a notification (section 8).
     Notify {
         id: String,
@@ -208,6 +210,7 @@ pub fn start(
         auth_sent: false,
         updates,
         backoff: 0,
+        legacy_state: false,
         mfa: None,
         mdns: None,
         cache: sd_card.then(cache::Cache::default),
@@ -284,6 +287,9 @@ enum Pending {
     Register,
     Subscribe,
     Action,
+    /// `esp32_screen/state`; failures are retried in the old format, never
+    /// shown on the screen.
+    State(crate::saver::ScreenState),
 }
 
 struct Worker {
@@ -305,6 +311,9 @@ struct Worker {
     /// Firmware update progress, for the screen.
     updates: Sender<crate::ota::Status>,
     backoff: u32,
+    /// The integration predates `screensaver_weather`/`screensaver_rotate`
+    /// (before 0.4.0): report state without them. Reset on every subscribe.
+    legacy_state: bool,
     /// Base URL and flow id of a login waiting for its second factor.
     mfa: Option<(String, String)>,
     mdns: Option<EspMdns>,
@@ -320,6 +329,23 @@ struct Worker {
 }
 
 impl Worker {
+    /// Sends `esp32_screen/state` (docs/protocol.md section 6).
+    fn report_state(&mut self, state: crate::saver::ScreenState) {
+        let mut msg = json!({
+            "type": "esp32_screen/state",
+            "screen_id": self.screen_id,
+            "brightness": state.brightness,
+            "screensaver_mode": state.mode.name(),
+            "screensaver_delay": state.delay_secs,
+            "screensaver_active": state.active,
+        });
+        if !self.legacy_state {
+            msg["screensaver_weather"] = json!(state.weather);
+            msg["screensaver_rotate"] = json!(state.rotate_secs);
+        }
+        self.request(msg, Pending::State(state));
+    }
+
     fn run(mut self, rx: Receiver<Msg>) {
         if let Some(stored) = &self.stored {
             // Show the last known dashboard while connecting.
@@ -465,15 +491,7 @@ impl Worker {
             }
             Command::ReportState(state) => {
                 if self.phase == Phase::Live {
-                    let msg = json!({
-                        "type": "esp32_screen/state",
-                        "screen_id": self.screen_id,
-                        "brightness": state.brightness,
-                        "screensaver_mode": state.mode.name(),
-                        "screensaver_delay": state.delay_secs,
-                        "screensaver_active": state.active,
-                    });
-                    self.request(msg, Pending::Action);
+                    self.report_state(state);
                 }
             }
             Command::NetworkUp => {
@@ -824,8 +842,19 @@ impl Worker {
             Pending::Register | Pending::Subscribe if !success => {
                 self.fail(format!("Home Assistant refused the screen ({message})."));
             }
+            Pending::State(state) if !success => {
+                if code == "invalid_format" && !self.legacy_state {
+                    log::info!("Home Assistant's integration predates the forecast screensaver");
+                    self.legacy_state = true;
+                    self.report_state(state);
+                } else {
+                    log::warn!("state report failed: {code} {message}");
+                }
+            }
+            Pending::State(_) => {}
             Pending::Subscribe => {
                 log::info!("subscribed to screen {}", self.screen_id);
+                self.legacy_state = false;
                 self.backoff = 0;
                 self.phase = Phase::Live;
                 self.emit(Event::Status(Status::Connected));
@@ -904,6 +933,10 @@ impl Worker {
                     "screensaver_delay" => {
                         value.as_u64().map(|v| ScreenCommand::SaverDelay(v as u32))
                     }
+                    "screensaver_weather" => value.as_bool().map(ScreenCommand::SaverWeather),
+                    "screensaver_rotate" => {
+                        value.as_u64().map(|v| ScreenCommand::SaverRotate(v as u32))
+                    }
                     "wake" => Some(ScreenCommand::Wake),
                     "sleep" => Some(ScreenCommand::Sleep),
                     _ => None,
@@ -957,6 +990,10 @@ impl Worker {
                     event["id"].as_str().unwrap_or("").to_string(),
                 ));
             }
+            Some("forecast") => match serde_json::from_value::<model::Forecast>(event.clone()) {
+                Ok(forecast) => self.emit(Event::Forecast(forecast)),
+                Err(e) => log::warn!("ignoring a forecast: {e}"),
+            },
             Some("info") => {
                 let text = |key: &str| event[key].as_str().unwrap_or("").to_string();
                 self.emit(Event::Info {

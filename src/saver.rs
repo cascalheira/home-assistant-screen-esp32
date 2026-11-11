@@ -1,4 +1,5 @@
-//! Backlight brightness and the optional screensaver clock (plain or flip).
+//! Backlight brightness and the optional screensaver: a clock (plain or
+//! flip), the weather forecast, or both taking turns.
 //!
 //! The screensaver starts after a period without touches while the dashboard
 //! is showing, once the time is known (SNTP, timezone from Home Assistant).
@@ -17,6 +18,7 @@ use slint::ComponentHandle;
 
 use crate::display::Backlight;
 use crate::logic::clock;
+use crate::logic::screensaver::{self as views, View};
 use crate::{AppWindow, Page};
 
 const NVS_NAMESPACE: &str = "display";
@@ -27,9 +29,14 @@ const NVS_DELAY_SECS: &str = "saver_secs";
 const NVS_BRIGHTNESS: &str = "brightness";
 const NVS_LANGUAGE: &str = "lang";
 const NVS_CLOCK_24H: &str = "clock24";
+const NVS_WEATHER: &str = "saver_wx";
+const NVS_ROTATE: &str = "saver_rot";
 
 /// The delays offered on the settings page.
 const DELAY_OPTIONS: [u32; 3] = [60, 5 * 60, 15 * 60];
+/// Seconds between the clock and the forecast when both are on.
+const ROTATE_OPTIONS: [u32; 4] = [10, 20, 30, 60];
+const ROTATE_DEFAULT: u32 = 20;
 const FLIP_DURATION: Duration = Duration::from_millis(650);
 /// Backlight while the screensaver shows (never brighter than the setting).
 const BRIGHTNESS_SAVER: u8 = 35;
@@ -76,6 +83,8 @@ pub struct ScreenState {
     pub mode: Mode,
     pub delay_secs: u32,
     pub active: bool,
+    pub weather: bool,
+    pub rotate_secs: u32,
 }
 
 /// Commands from Home Assistant (docs/protocol.md section 6) and the clock
@@ -85,6 +94,12 @@ pub enum ScreenCommand {
     Brightness(u8),
     SaverMode(Mode),
     SaverDelay(u32),
+    /// Show the forecast as a screensaver.
+    SaverWeather(bool),
+    /// Seconds per view when the clock and the forecast take turns.
+    SaverRotate(u32),
+    /// Home Assistant sent a forecast with at least one day (or none).
+    ForecastReady(bool),
     Wake,
     /// Wake for a notification: like `Wake`, and a backlight turned off
     /// from Home Assistant comes back on.
@@ -106,6 +121,12 @@ pub struct Saver {
     last_brightness: u8,
     portuguese: bool,
     h24: bool,
+    weather: bool,
+    rotate_secs: u32,
+    forecast_ready: bool,
+    /// The view on screen while active, and since when.
+    view: Option<View>,
+    view_since: Instant,
     active: bool,
     /// The screensaver was started on request (`sleep`) while it is off in
     /// the settings: show the plain clock until woken.
@@ -141,6 +162,12 @@ impl Saver {
         let brightness = u8_or(NVS_BRIGHTNESS, 100).min(100);
         let portuguese = u8_or(NVS_LANGUAGE, 0) == 1;
         let h24 = u8_or(NVS_CLOCK_24H, 1) == 1;
+        let weather = u8_or(NVS_WEATHER, 0) == 1;
+        let rotate_secs = nvs
+            .as_ref()
+            .and_then(|n| n.get_u32(NVS_ROTATE).ok().flatten())
+            .filter(|s| ROTATE_OPTIONS.contains(s))
+            .unwrap_or(ROTATE_DEFAULT);
 
         let saver = Rc::new(RefCell::new(Self {
             nvs,
@@ -150,6 +177,11 @@ impl Saver {
             last_brightness: brightness.max(1),
             portuguese,
             h24,
+            weather,
+            rotate_secs,
+            forecast_ready: false,
+            view: None,
+            view_since: Instant::now(),
             active: false,
             forced: false,
             swallowing: false,
@@ -180,6 +212,24 @@ impl Saver {
                 s.show_settings(&ui);
             }
         });
+        let weak = ui.as_weak();
+        let s = saver.clone();
+        ui.on_saver_weather_picked(move |index| {
+            let mut s = s.borrow_mut();
+            s.set_weather(index == 1);
+            if let Some(ui) = weak.upgrade() {
+                s.show_settings(&ui);
+            }
+        });
+        let weak = ui.as_weak();
+        let s = saver.clone();
+        ui.on_saver_rotate_picked(move |index| {
+            let mut s = s.borrow_mut();
+            s.set_rotate(ROTATE_OPTIONS[(index.max(0) as usize).min(ROTATE_OPTIONS.len() - 1)]);
+            if let Some(ui) = weak.upgrade() {
+                s.show_settings(&ui);
+            }
+        });
         saver
     }
 
@@ -187,6 +237,56 @@ impl Saver {
         ui.set_saver_mode(self.mode as i32);
         let index = DELAY_OPTIONS.iter().position(|&d| d == self.delay_secs);
         ui.set_saver_delay(index.map(|i| i as i32).unwrap_or(-1));
+        ui.set_saver_weather(self.weather);
+        let index = ROTATE_OPTIONS.iter().position(|&s| s == self.rotate_secs);
+        ui.set_saver_rotate(index.map(|i| i as i32).unwrap_or(-1));
+    }
+
+    fn set_weather(&mut self, on: bool) {
+        self.weather = on;
+        self.save_u8(NVS_WEATHER, on as u8);
+        self.last_input = Instant::now();
+    }
+
+    fn set_rotate(&mut self, secs: u32) {
+        if !ROTATE_OPTIONS.contains(&secs) {
+            log::warn!("ignoring a screensaver rotation of {secs} s");
+            return;
+        }
+        self.rotate_secs = secs;
+        if let Some(nvs) = &mut self.nvs {
+            if let Err(e) = nvs.set_u32(NVS_ROTATE, secs) {
+                log::warn!("saving the screensaver rotation failed: {e}");
+            }
+        }
+    }
+
+    /// Some screensaver is turned on.
+    fn enabled(&self) -> bool {
+        self.mode != Mode::Off || self.weather
+    }
+
+    /// The view to show now; None = stop.
+    fn wanted_view(&self) -> Option<View> {
+        views::view(
+            self.mode != Mode::Off || self.forced,
+            self.weather,
+            self.forecast_ready,
+            self.view,
+            self.view_since.elapsed().as_secs(),
+            self.rotate_secs as u64,
+        )
+    }
+
+    fn show_view(&mut self, ui: &AppWindow, view: View) {
+        if self.view != Some(view) {
+            self.view = Some(view);
+            self.view_since = Instant::now();
+            ui.set_saver_view(match view {
+                View::Clock => 0,
+                View::Forecast => 1,
+            });
+        }
     }
 
     fn save_u8(&mut self, key: &str, value: u8) {
@@ -232,6 +332,8 @@ impl Saver {
             mode: self.mode,
             delay_secs: self.delay_secs,
             active: self.active,
+            weather: self.weather,
+            rotate_secs: self.rotate_secs,
         }
     }
 
@@ -254,6 +356,15 @@ impl Saver {
                 self.set_delay(secs);
                 self.show_settings(ui);
             }
+            ScreenCommand::SaverWeather(on) => {
+                self.set_weather(on);
+                self.show_settings(ui);
+            }
+            ScreenCommand::SaverRotate(secs) => {
+                self.set_rotate(secs);
+                self.show_settings(ui);
+            }
+            ScreenCommand::ForecastReady(ready) => self.forecast_ready = ready,
             ScreenCommand::Wake => {
                 self.last_input = Instant::now();
                 if self.active {
@@ -273,7 +384,7 @@ impl Saver {
             }
             ScreenCommand::Sleep => {
                 if !self.active {
-                    self.forced = self.mode == Mode::Off;
+                    self.forced = !self.enabled();
                     self.start(ui, backlight);
                 }
             }
@@ -322,7 +433,7 @@ impl Saver {
 
     /// Starts the screensaver now if it is enabled and the time is known.
     pub fn start_now(&mut self, ui: &AppWindow, backlight: &mut Backlight) {
-        if self.mode != Mode::Off {
+        if self.enabled() {
             self.start(ui, backlight);
         }
     }
@@ -334,6 +445,11 @@ impl Saver {
         ui.set_dimmer_open(false);
         ui.set_sheet_open(false);
         ui.set_saver_flip(self.mode == Mode::Flip);
+        self.view = None;
+        let Some(view) = self.wanted_view() else {
+            return;
+        };
+        self.show_view(ui, view);
         // Show the current time without flipping into it.
         let digits = self.digits_of(&now);
         for (i, d) in digits.iter().enumerate() {
@@ -345,6 +461,7 @@ impl Saver {
         }
         self.shown_minute = Some(now.tm_hour * 60 + now.tm_min);
         ui.set_clock_date(self.date_text(&now).into());
+        ui.set_clock_time(clock::time_text(now.tm_hour, now.tm_min, self.h24).into());
         ui.set_saver_active(true);
         self.active = true;
         self.apply_backlight(backlight);
@@ -355,6 +472,7 @@ impl Saver {
         ui.set_saver_active(false);
         self.active = false;
         self.forced = false;
+        self.view = None;
         self.apply_backlight(backlight);
     }
 
@@ -362,19 +480,20 @@ impl Saver {
     pub fn tick(&mut self, ui: &AppWindow, backlight: &mut Backlight) {
         if !self.active {
             let idle = self.last_input.elapsed() >= Duration::from_secs(self.delay_secs as u64);
-            if self.mode != Mode::Off
-                && idle
-                && !self.swallowing
-                && ui.get_page() == Page::Dashboard
-            {
+            if self.enabled() && idle && !self.swallowing && ui.get_page() == Page::Dashboard {
                 self.start(ui, backlight);
             }
             return;
         }
-        if self.mode == Mode::Off && !self.forced {
+        if self.enabled() {
+            // Turned on again after a forced start: no longer forced.
+            self.forced = false;
+        }
+        let Some(view) = self.wanted_view() else {
             self.stop(ui, backlight);
             return;
-        }
+        };
+        self.show_view(ui, view);
         ui.set_saver_flip(self.mode == Mode::Flip);
         self.animate_flips(ui);
         let Some(now) = local_time() else { return };
@@ -387,6 +506,7 @@ impl Saver {
             self.set_digit(ui, i, *d);
         }
         ui.set_clock_date(self.date_text(&now).into());
+        ui.set_clock_time(clock::time_text(now.tm_hour, now.tm_min, self.h24).into());
     }
 
     pub fn is_active(&self) -> bool {

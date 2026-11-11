@@ -20,6 +20,7 @@ from .const import (
     OTA_STATES,
     SCREEN_ID_PATTERN,
     SCREENSAVER_MODES,
+    SCREENSAVER_ROTATE,
     LANGUAGES,
 )
 from .layout import ENTITY_ID_RE, LayoutError, validate_layout
@@ -213,6 +214,9 @@ def ws_ota_status(
         vol.Required("screensaver_mode"): vol.In(SCREENSAVER_MODES),
         vol.Required("screensaver_delay"): vol.All(int, vol.Range(min=0, max=86400)),
         vol.Required("screensaver_active"): bool,
+        # Firmware 0.6.0 and later.
+        vol.Optional("screensaver_weather"): bool,
+        vol.Optional("screensaver_rotate"): vol.In(SCREENSAVER_ROTATE),
     }
 )
 @callback
@@ -231,7 +235,11 @@ def ws_state(
         msg["screen_id"],
         {
             key: msg[key]
-            for key in ("brightness", "screensaver_mode", "screensaver_delay", "screensaver_active")
+            for key in (
+                "brightness", "screensaver_mode", "screensaver_delay", "screensaver_active",
+                "screensaver_weather", "screensaver_rotate",
+            )
+            if key in msg
         },
     )
     connection.send_result(msg["id"])

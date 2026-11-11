@@ -41,6 +41,7 @@ PLATFORMS = [
     Platform.LIGHT,
     Platform.NUMBER,
     Platform.SELECT,
+    Platform.SWITCH,
     Platform.UPDATE,
 ]
 

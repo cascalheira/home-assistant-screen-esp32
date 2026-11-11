@@ -339,14 +339,15 @@ class ScreenSim:
 
     async def report_state(
         self, brightness: int = 80, screensaver_mode: str = "clock", screensaver_delay: int = 300,
-        screensaver_active: bool = False,
+        screensaver_active: bool = False, **newer: Any,
     ) -> Any:
-        """esp32_screen/state, as the firmware sends after subscribe and on changes."""
+        """esp32_screen/state, as the firmware sends after subscribe and on changes.
+        `newer`: fields of later firmware (screensaver_weather, screensaver_rotate)."""
         assert self.ws is not None
         return await self.ws.call(
             "esp32_screen/state", screen_id=self.screen_id, brightness=brightness,
             screensaver_mode=screensaver_mode, screensaver_delay=screensaver_delay,
-            screensaver_active=screensaver_active,
+            screensaver_active=screensaver_active, **newer,
         )
 
     async def ota_status(self, state: str, progress: int = 0, error: str | None = None) -> Any:

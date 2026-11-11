@@ -132,7 +132,16 @@ OTA_STATES: Final = ("downloading", "verifying", "restarting", "failed")
 
 # Screen controls (docs/protocol.md, section 6).
 SCREENSAVER_MODES: Final = ("off", "clock", "flip")
-COMMANDS: Final = ("brightness", "screensaver_mode", "screensaver_delay", "wake", "sleep")
+# Seconds between clock and forecast when both are on.
+SCREENSAVER_ROTATE: Final = (10, 20, 30, 60)
+COMMANDS: Final = (
+    "brightness", "screensaver_mode", "screensaver_delay", "screensaver_weather",
+    "screensaver_rotate", "wake", "sleep",
+)
+# Weather forecast for the screensaver (docs/protocol.md, section 7).
+FORECAST_DAYS: Final = 7
+FORECAST_REFRESH: Final = 30 * 60  # seconds
+FORECAST_MIN_INTERVAL: Final = 5 * 60  # seconds between fetches on state changes
 
 # Per-screen settings (docs/protocol.md, section 7).
 LANGUAGES: Final = ("en", "pt")

@@ -13,11 +13,13 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel, Weak};
 
-use crate::ha::model::{Layout, Tile, TileState};
+use crate::ha::model::{Forecast, Layout, Tile, TileState};
 use crate::ha::{self, HaControl, HaHandle, Status};
+use crate::logic::clock;
 use crate::wifi::{self, Command, Connection, FailReason, WifiControl, WifiHandle};
 use crate::{
-    ActionButton, AppWindow, InstanceItem, ModeItem, NetworkItem, Page, PageTab, TileData,
+    ActionButton, AppWindow, ForecastDayView, InstanceItem, ModeItem, NetworkItem, Page, PageTab,
+    TileData,
 };
 
 const MAX_SSID_BYTES: usize = 32;
@@ -105,6 +107,8 @@ struct State {
     screen_name: String,
     layout: Layout,
     states: HashMap<String, TileState>,
+    forecast: Forecast,
+    portuguese: bool,
     page_index: usize,
     dash_action: DashAction,
 
@@ -209,6 +213,8 @@ impl App {
                 screen_name: "ESP32 Screen".into(),
                 layout: Layout::default(),
                 states: HashMap::new(),
+                forecast: Forecast::default(),
+                portuguese: false,
                 page_index: 0,
                 dash_action: DashAction::None,
                 climate_tile: None,
@@ -266,10 +272,20 @@ impl App {
         while let Ok(event) = self.ha_events.try_recv() {
             match event {
                 ha::Event::Command(command) => self.screen_commands.borrow_mut().push(command),
-                ha::Event::Settings { portuguese, h24 } => self
-                    .screen_commands
-                    .borrow_mut()
-                    .push(crate::saver::ScreenCommand::ClockFormat { portuguese, h24 }),
+                ha::Event::Settings { portuguese, h24 } => {
+                    self.screen_commands
+                        .borrow_mut()
+                        .push(crate::saver::ScreenCommand::ClockFormat { portuguese, h24 });
+                    self.shared.st.borrow_mut().portuguese = portuguese;
+                    self.shared.show_forecast();
+                }
+                ha::Event::Forecast(forecast) => {
+                    self.screen_commands.borrow_mut().push(
+                        crate::saver::ScreenCommand::ForecastReady(!forecast.days.is_empty()),
+                    );
+                    self.shared.st.borrow_mut().forecast = forecast;
+                    self.shared.show_forecast();
+                }
                 ha::Event::Notify { .. } => {
                     // Wake the screen (and its backlight) for it.
                     self.screen_commands
@@ -493,9 +509,12 @@ impl Shared {
                 s.action(&id, "set_mode", Some(json!(mode.as_str())));
             }
         });
-        on!(on_dimmer_commit, |s, value| s.dimmer_action("brightness", value));
-        on!(on_dimmer_hue_commit, |s, value| s.dimmer_action("hue", value));
-        on!(on_dimmer_kelvin_commit, |s, value| s.dimmer_action("kelvin", value));
+        on!(on_dimmer_commit, |s, value| s
+            .dimmer_action("brightness", value));
+        on!(on_dimmer_hue_commit, |s, value| s
+            .dimmer_action("hue", value));
+        on!(on_dimmer_kelvin_commit, |s, value| s
+            .dimmer_action("kelvin", value));
         on!(on_tile_adjust, |s, id, what, value| {
             let action = match what.as_str() {
                 "brightness" => "brightness",
@@ -1115,7 +1134,7 @@ impl Shared {
                 }
             }
             // Routed to the main loop by App::poll.
-            ha::Event::Command(_) | ha::Event::Settings { .. } => {}
+            ha::Event::Command(_) | ha::Event::Settings { .. } | ha::Event::Forecast(_) => {}
         }
     }
 
@@ -1344,6 +1363,58 @@ impl Shared {
         if let Some(ui) = self.ui() {
             ui.set_climate_open(true);
         }
+    }
+
+    /// Puts the forecast into the screensaver's forecast view.
+    fn show_forecast(&self) {
+        let Some(ui) = self.ui() else { return };
+        let st = self.st.borrow();
+        let pt = st.portuguese;
+        let today = crate::saver::local_time().map(|tm| {
+            format!(
+                "{:04}-{:02}-{:02}",
+                tm.tm_year + 1900,
+                tm.tm_mon + 1,
+                tm.tm_mday
+            )
+        });
+        let degrees = |t: Option<i64>| t.map(|t| format!("{t}°")).unwrap_or_default();
+        let days: Vec<ForecastDayView> = st
+            .forecast
+            .days
+            .iter()
+            .map(|d| ForecastDayView {
+                name: if today.as_deref() == Some(d.date.as_str()) {
+                    clock::today(pt)
+                } else {
+                    clock::weekday_short(d.weekday, pt)
+                }
+                .into(),
+                condition: d.condition.as_str().into(),
+                high: degrees(d.high).into(),
+                low: degrees(d.low).into(),
+                precipitation: d
+                    .precipitation
+                    .filter(|&p| p > 0)
+                    .map(|p| format!("{p}%"))
+                    .unwrap_or_default()
+                    .into(),
+            })
+            .collect();
+        let (title, hint) = match (days.is_empty(), pt) {
+            (false, _) => ("", ""),
+            (true, false) => (
+                "No weather forecast",
+                "Pick a weather entity for this screen in Home Assistant: Screens › Screen settings.",
+            ),
+            (true, true) => (
+                "Sem previsão do tempo",
+                "Escolha uma entidade de meteorologia para este ecrã no Home Assistant: Screens › Screen settings.",
+            ),
+        };
+        ui.set_forecast_days(ModelRc::new(VecModel::from(days)));
+        ui.set_forecast_title(title.into());
+        ui.set_forecast_hint(hint.into());
     }
 
     fn dimmer_action(&self, action: &'static str, value: i32) {

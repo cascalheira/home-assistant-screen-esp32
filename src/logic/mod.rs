@@ -4,4 +4,5 @@
 pub mod clock;
 pub mod image;
 pub mod net;
+pub mod screensaver;
 pub mod touch;

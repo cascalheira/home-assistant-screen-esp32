@@ -57,3 +57,20 @@ fn date_line_portuguese() {
 fn date_line_out_of_range_fields_do_not_panic() {
     assert_eq!(date_line(date(9, 1, 14, 0), false, true), ", 1 ");
 }
+
+#[test]
+fn time_text_formats() {
+    use esp32_screen_host_tests::logic::clock::time_text;
+    assert_eq!(time_text(14, 5, true), "14:05");
+    assert_eq!(time_text(7, 30, true), "07:30");
+    assert_eq!(time_text(0, 0, false), "12:00 AM");
+    assert_eq!(time_text(14, 5, false), "2:05 PM");
+}
+
+#[test]
+fn short_day_names() {
+    use esp32_screen_host_tests::logic::clock::weekday_short;
+    assert_eq!(weekday_short(0, false), "Sun");
+    assert_eq!(weekday_short(6, true), "Sáb");
+    assert_eq!(weekday_short(7, false), "");
+}

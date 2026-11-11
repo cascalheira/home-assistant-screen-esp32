@@ -83,3 +83,20 @@ fn light_colour_state() {
     assert_eq!(plain.color(), None);
     assert_eq!(plain.kelvin_range(), None);
 }
+
+#[test]
+fn forecast_event() {
+    use esp32_screen_host_tests::model::Forecast;
+    let forecast: Forecast = serde_json::from_str(
+        r#"{"kind":"forecast","unit":"°C","days":[
+            {"date":"2026-11-12","weekday":4,"condition":"rainy","high":18,"low":11,"precipitation":80},
+            {"date":"2026-11-13","weekday":5,"condition":"sunny","high":21,"low":null,"precipitation":null}]}"#,
+    )
+    .unwrap();
+    assert_eq!(forecast.unit, "°C");
+    assert_eq!(forecast.days.len(), 2);
+    assert_eq!(forecast.days[0].precipitation, Some(80));
+    assert_eq!(forecast.days[1].low, None);
+    let empty: Forecast = serde_json::from_str(r#"{"unit":"","days":[]}"#).unwrap();
+    assert!(empty.days.is_empty());
+}

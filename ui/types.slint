@@ -47,6 +47,15 @@ export struct TileData {
     color: color,
 }
 
+// One day of the screensaver's forecast; text already formatted.
+export struct ForecastDayView {
+    name: string, // "Today", "Mon", ...
+    condition: string, // HA condition, picks the icon
+    high: string, // "18°"
+    low: string, // "11°" or ""
+    precipitation: string, // "80%" or ""
+}
+
 export struct ModeItem {
     id: string,
     label: string,

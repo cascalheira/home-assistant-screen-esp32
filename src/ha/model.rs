@@ -150,3 +150,25 @@ pub struct Instance {
     pub name: String,
     pub url: String,
 }
+
+/// The `forecast` event (docs/protocol.md section 7).
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Forecast {
+    pub unit: String,
+    pub days: Vec<ForecastDay>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct ForecastDay {
+    /// "2026-11-12", in Home Assistant's time zone.
+    pub date: String,
+    /// 0 = Sunday.
+    pub weekday: i32,
+    pub condition: String,
+    pub high: Option<i64>,
+    pub low: Option<i64>,
+    /// Chance of precipitation, percent.
+    pub precipitation: Option<i64>,
+}

@@ -46,12 +46,15 @@ from .const import (
     KIND_SCENE,
     KIND_TOGGLE,
     MANUFACTURER,
+    FORECAST_MIN_INTERVAL,
+    FORECAST_REFRESH,
     SENSOR_FIELDS,
     default_settings,
     STORAGE_KEY,
     STORAGE_VERSION,
 )
 from .firmware import FirmwareImage, FirmwareStore
+from .forecast import async_forecast
 from .notifications import NotificationImages
 from .layout import empty_layout, iter_tiles, upgrade_layout
 from .view_model import info_payload, resolve_label, tile_view_model
@@ -142,6 +145,10 @@ class ScreenSubscription:
         self._unsub_timer: CALLBACK_TYPE | None = None
         self._unsub_info: CALLBACK_TYPE | None = None
         self._info: dict[str, Any] | None = None
+        self._unsub_forecast_timer: CALLBACK_TYPE | None = None
+        self._forecast: dict[str, Any] | None = None
+        self._forecast_task: asyncio.Task[None] | None = None
+        self._forecast_at: datetime | None = None
 
     @callback
     def start(self) -> None:
@@ -157,9 +164,19 @@ class ScreenSubscription:
         if self._unsub_timer is not None:
             self._unsub_timer()
             self._unsub_timer = None
+        self._stop_info()
+
+    @callback
+    def _stop_info(self) -> None:
         if self._unsub_info is not None:
             self._unsub_info()
             self._unsub_info = None
+        if self._unsub_forecast_timer is not None:
+            self._unsub_forecast_timer()
+            self._unsub_forecast_timer = None
+        if self._forecast_task is not None:
+            self._forecast_task.cancel()
+            self._forecast_task = None
 
     @callback
     def send_full(self) -> None:
@@ -202,10 +219,8 @@ class ScreenSubscription:
 
     @callback
     def send_settings(self) -> None:
-        """Send `settings` and `info`, and (re)track the info entities."""
-        if self._unsub_info is not None:
-            self._unsub_info()
-            self._unsub_info = None
+        """Send `settings`, `info` and `forecast`, and (re)track the info entities."""
+        self._stop_info()
         record = self.manager.screens.get(self.screen_id)
         settings = record.settings if record else default_settings()
         self.connection.send_event(
@@ -229,10 +244,46 @@ class ScreenSubscription:
             self._unsub_info = async_track_state_change_event(
                 self.hass, entities, self._info_changed
             )
+        self._forecast = None
+        self._refresh_forecast(force=True)
+        self._unsub_forecast_timer = async_track_time_interval(
+            self.hass,
+            lambda _now: self._refresh_forecast(force=True),
+            timedelta(seconds=FORECAST_REFRESH),
+            name="esp32_screen forecast",
+        )
 
     @callback
-    def _info_changed(self, _event: Event[EventStateChangedData]) -> None:
+    def _info_changed(self, event: Event[EventStateChangedData]) -> None:
         self._push_info()
+        if event.data["entity_id"].startswith("weather."):
+            self._refresh_forecast()
+
+    @callback
+    def _refresh_forecast(self, force: bool = False) -> None:
+        """Fetch the forecast and send it when it changed. Without `force`,
+        at most every FORECAST_MIN_INTERVAL (weather entities update often)."""
+        if self._forecast_task is not None and not self._forecast_task.done():
+            return
+        now = dt_util.utcnow()
+        if (
+            not force
+            and self._forecast_at is not None
+            and (now - self._forecast_at).total_seconds() < FORECAST_MIN_INTERVAL
+        ):
+            return
+        self._forecast_at = now
+        self._forecast_task = self.hass.async_create_background_task(
+            self._push_forecast(), f"esp32_screen forecast {self.screen_id}"
+        )
+
+    async def _push_forecast(self) -> None:
+        record = self.manager.screens.get(self.screen_id)
+        settings = record.settings if record else default_settings()
+        forecast = await async_forecast(self.hass, settings["weather_entity"])
+        if forecast != self._forecast:
+            self._forecast = forecast
+            self.connection.send_event(self.msg_id, {"kind": "forecast", **forecast})
 
     @callback
     def _push_info(self) -> None:

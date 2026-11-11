@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import copy
+import datetime
 import hashlib
 import os
 import struct
@@ -60,14 +61,16 @@ def fake_image(version: str, project: str = "esp32-screen", magic: int = 0xABCD5
 async def control_tests(admin: HAWebSocket, sim: ScreenSim) -> None:
     """Section 6: backlight, screensaver select/number/sensor, wake/show-clock buttons."""
     registry = await admin.call("config/entity_registry/list")
-    keys = ("backlight", "screensaver", "screensaver_delay", "wake", "show_clock", "screensaver_active")
+    keys = ("backlight", "screensaver", "screensaver_delay", "wake", "show_clock", "screensaver_active",
+            "screensaver_weather", "screensaver_rotate")
     ids = {k: next((e["entity_id"] for e in registry if e.get("unique_id") == f"{SIM_ID}_{k}"), None) for k in keys}
     check(all(ids.values()), "screen control entities exist", str(ids))
     if not all(ids.values()):
         return
     check(ids["backlight"].startswith("light.") and ids["screensaver"].startswith("select.")
           and ids["screensaver_delay"].startswith("number.") and ids["wake"].startswith("button.")
-          and ids["show_clock"].startswith("button.") and ids["screensaver_active"].startswith("binary_sensor."),
+          and ids["show_clock"].startswith("button.") and ids["screensaver_active"].startswith("binary_sensor.")
+          and ids["screensaver_weather"].startswith("switch.") and ids["screensaver_rotate"].startswith("select."),
           "control entity domains", " ".join(ids.values()))
 
     async def states() -> dict[str, dict[str, Any]]:
@@ -129,6 +132,29 @@ async def control_tests(admin: HAWebSocket, sim: ScreenSim) -> None:
                                    screensaver_delay=60, screensaver_active=False), "not_found", "state for an unknown screen -> not_found")
     await expect_error(sim.ws.call("esp32_screen/state", screen_id=SIM_ID, brightness=101, screensaver_mode="off",
                                    screensaver_delay=60, screensaver_active=False), "invalid_format", "state with brightness 101 -> invalid_format")
+
+    # Firmware before 0.6.0 doesn't report the forecast settings.
+    await sim.report_state(brightness=80, screensaver_mode="clock", screensaver_delay=300, screensaver_active=False)
+    await asyncio.sleep(0.3)
+    st = await states()
+    check(st["screensaver_weather"]["state"] == "unavailable" and st["screensaver_rotate"]["state"] == "unavailable"
+          and st["screensaver"]["state"] == "clock",
+          "older firmware: forecast switch and rotation unavailable, others fine")
+    await sim.report_state(brightness=80, screensaver_mode="clock", screensaver_delay=300, screensaver_active=False,
+                           screensaver_weather=True, screensaver_rotate=20)
+    await asyncio.sleep(0.3)
+    st = await states()
+    check(st["screensaver_weather"]["state"] == "on" and st["screensaver_rotate"]["state"] == "20",
+          "forecast switch and rotation reflect esp32_screen/state",
+          f"{st['screensaver_weather']['state']} {st['screensaver_rotate']['state']}")
+    cmd = await command_after(service("switch", "turn_off", "screensaver_weather"))
+    check(cmd == {"kind": "command", "command": "screensaver_weather", "value": False}, "forecast switch off -> command", str(cmd))
+    cmd = await command_after(service("switch", "turn_on", "screensaver_weather"))
+    check(cmd == {"kind": "command", "command": "screensaver_weather", "value": True}, "forecast switch on -> command", str(cmd))
+    cmd = await command_after(service("select", "select_option", "screensaver_rotate", option="60"))
+    check(cmd == {"kind": "command", "command": "screensaver_rotate", "value": 60}, "rotation 60 -> command screensaver_rotate 60", str(cmd))
+    await expect_error(sim.report_state(screensaver_weather=True, screensaver_rotate=15), "invalid_format",
+                       "state with rotation 15 s -> invalid_format")
     await sim.report_state(brightness=80, screensaver_mode="clock", screensaver_delay=300, screensaver_active=False)
 
 
@@ -136,6 +162,7 @@ async def settings_tests(admin: HAWebSocket, sim: ScreenSim) -> None:
     """Section 7: settings and info events, editor settings, entity tracking."""
     after_subscribe = [e["kind"] for e in sim.events[:4]]
     check(after_subscribe == ["layout", "states", "settings", "info"], "subscribe sends layout, states, settings, info", str(after_subscribe))
+    check({"kind": "forecast", "unit": "", "days": []} in sim.events, "no weather entity -> empty forecast event")
     check(sim.events[2] == {"kind": "settings", "settings": {"language": "en", "clock_24h": True}}
           and sim.events[3] == {"kind": "info", "weather_condition": "", "weather_temperature": "", "indoor_temperature": ""},
           "defaults: en, 24 h clock, no info", f"{sim.events[2]} {sim.events[3]}")
@@ -156,6 +183,19 @@ async def settings_tests(admin: HAWebSocket, sim: ScreenSim) -> None:
         check(False, "changing settings sends settings + info events", str(sim.events[mark:]))
     kinds = [e["kind"] for e in sim.events[mark:]]
     check("layout" not in kinds, "a settings change does not resend the layout", str(kinds))
+    try:
+        forecast = await sim.wait_for(lambda e: e.get("kind") == "forecast" and e["days"], 10, since=mark)
+        days = forecast["days"]
+        ok = (
+            forecast["unit"] == "°C" and 5 <= len(days) <= 7
+            and all(set(d) == {"date", "weekday", "condition", "high", "low", "precipitation"} for d in days)
+            and all((datetime.date.fromisoformat(d["date"]).weekday() + 1) % 7 == d["weekday"] for d in days)
+            and [d["date"] for d in days] == sorted({d["date"] for d in days})
+            and all(isinstance(d["high"], int) and d["condition"] for d in days)
+        )
+        check(ok, "a weather entity -> forecast event with daily days (date, weekday, condition, high/low)", str(days[:2]))
+    except TimeoutError:
+        check(False, "a weather entity -> forecast event", str([e for e in sim.events[mark:] if e.get("kind") == "forecast"]))
     stored = next(s_ for s_ in (await admin.call("esp32_screen/screens"))["screens"] if s_["screen_id"] == SIM_ID)
     check(stored["settings"] == {"weather_entity": "weather.demo_weather_south", "indoor_temperature_entity": "sensor.living_room_temperature",
                                  "language": "pt", "clock_24h": False}, "settings stored with the screen record", str(stored["settings"]))
@@ -201,6 +241,8 @@ async def settings_tests(admin: HAWebSocket, sim: ScreenSim) -> None:
         info = await sim.wait_for(lambda e: e.get("kind") == "info", 5, since=mark)
         check(info == {"kind": "info", "weather_condition": "", "weather_temperature": "", "indoor_temperature": ""},
               "clearing the entities -> empty info", str(info))
+        forecast = await sim.wait_for(lambda e: e.get("kind") == "forecast", 5, since=mark)
+        check(forecast == {"kind": "forecast", "unit": "", "days": []}, "clearing the weather entity -> empty forecast", str(forecast))
     except TimeoutError:
         check(False, "clearing the entities -> empty info", "no info event")
 

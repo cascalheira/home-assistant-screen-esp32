@@ -441,7 +441,9 @@ The backlight and screensaver are HA entities on the screen's device:
 | entity | what |
 |---|---|
 | `light.<screen>_backlight` | on/off + brightness (HA 1-255 ⇄ screen 1-100) |
-| `select.<screen>_screensaver` | `off`, `clock`, `flip` |
+| `select.<screen>_screensaver` | the clock: `off`, `clock`, `flip` |
+| `switch.<screen>_weather_forecast_screensaver` | the 7-day forecast as a screensaver (firmware 0.6.0+) |
+| `select.<screen>_screensaver_switch_every` | `10`, `20`, `30`, `60`: seconds between clock and forecast when both are on (firmware 0.6.0+) |
 | `number.<screen>_screensaver_delay` | idle minutes before the screensaver, 1-60 |
 | `button.<screen>_wake` | wake the screen (leave the screensaver) |
 | `button.<screen>_show_clock` | start the screensaver now |
@@ -460,6 +462,8 @@ Sent on the screen's `esp32_screen/subscribe` subscription:
 {"kind":"command","command":"brightness","value":50}           // 0-100, 0 = backlight off
 {"kind":"command","command":"screensaver_mode","value":"flip"} // "off" | "clock" | "flip"
 {"kind":"command","command":"screensaver_delay","value":600}   // seconds
+{"kind":"command","command":"screensaver_weather","value":true} // forecast on/off
+{"kind":"command","command":"screensaver_rotate","value":20}    // 10 | 20 | 30 | 60 seconds
 {"kind":"command","command":"wake","value":null}
 {"kind":"command","command":"sleep","value":null}              // show the screensaver now
 ```
@@ -471,12 +475,22 @@ without a brightness sends the last brightness above 0 (100 if none is known).
 
 ```json
 {"type":"esp32_screen/state","screen_id":"A0B1C2D3E4F5","brightness":80,
- "screensaver_mode":"clock","screensaver_delay":300,"screensaver_active":false}
+ "screensaver_mode":"clock","screensaver_delay":300,"screensaver_active":false,
+ "screensaver_weather":true,"screensaver_rotate":20}
 ```
 
-- **Fields.** All are required. `brightness` is 0-100,
-  `screensaver_mode` is `off`, `clock` or `flip`, `screensaver_delay` is seconds
-  (0-86400), and `screensaver_active` is a bool.
+The screensaver shows the clock (`screensaver_mode` not `off`), the forecast
+(`screensaver_weather`), or both taking turns every `screensaver_rotate`
+seconds. It is off when neither is on. With both on and no forecast to show,
+only the clock shows.
+
+- **Fields.** All are required, except `screensaver_weather` (bool) and
+  `screensaver_rotate` (10, 20, 30 or 60), which firmware before 0.6.0 doesn't
+  send; HA shows those two entities unavailable without them. An integration
+  older than 0.4.0 rejects them with `invalid_format`; the firmware then
+  reports without them until the next subscribe. `brightness` is
+  0-100, `screensaver_mode` is `off`, `clock` or `flip`, `screensaver_delay` is
+  seconds (0-86400), and `screensaver_active` is a bool.
 - **When to send.** Send it after every `subscribe`, and whenever any of these
   values changes, including changes made on the screen's own settings page.
 - **Result.** `null`. An unknown screen gets `not_found`, an invalid value gets
@@ -521,6 +535,28 @@ After `layout` and `states`, the subscription sends `settings`, then `info`:
   missing, unavailable or unknown.
 - **When `info` is sent.** HA tracks the configured entities and sends `info`
   only when one of the three strings changes.
+
+### Forecast
+
+After `info`, and again whenever it changes, HA sends the weather entity's daily
+forecast (`weather.get_forecasts`, type `daily`):
+
+```jsonc
+{"kind":"forecast","unit":"°C","days":[
+  {"date":"2026-11-12","weekday":4,"condition":"rainy","high":18,"low":11,"precipitation":80},
+  ...]}
+```
+
+- **`days`.** Up to 7, from today in HA's time zone, in date order. Empty (and
+  `unit` `""`) without a weather entity, when it is unavailable, or when it has
+  no daily forecast.
+- **`weekday`.** 0 = Sunday ... 6 = Saturday, like C's `tm_wday`.
+- **`condition`.** As for `weather_condition`.
+- **`high`, `low`.** Whole numbers in `unit`; `low` is null when the provider
+  gives no minimum. **`precipitation`** is the chance of precipitation in
+  percent, or null.
+- **When.** On subscribe and settings changes, every 30 minutes, and when the
+  weather entity changes (at most every 5 minutes).
 
 ### Editor command
 
