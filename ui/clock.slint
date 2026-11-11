@@ -8,6 +8,22 @@
 import { Icons } from "dashboard.slint";
 import { ForecastDayView } from "types.slint";
 
+// Screensaver colours: dark or light, set from Rust (its own theme setting).
+export global SaverTheme {
+    in-out property <bool> dark: true;
+    out property <color> bg: root.dark ? #000000 : #eef0f4;
+    out property <color> ink: root.dark ? #e9ecf2 : #151a23;
+    out property <color> muted: root.dark ? #8b93a3 : #5b6474;
+    // Flip-clock cards, the line across them and the colon.
+    out property <color> card: root.dark ? #1b1f27 : #ffffff;
+    out property <color> hinge: root.dark ? #07080b : #c9ced7;
+    out property <color> colon: root.dark ? #9aa3b5 : #5b6474;
+    // Forecast columns: today, the other days.
+    out property <color> today: root.dark ? #161a22 : #ffffff;
+    out property <color> day: root.dark ? #0e1116 : #e2e6ec;
+    out property <color> rain: root.dark ? #60a5fa : #2563eb;
+}
+
 export global ClockGlyphs {
     // Weather condition (HA's state of a weather entity) -> icon.
     pure public function weather-icon(condition: string) -> string {
@@ -87,8 +103,8 @@ component FlipDigit inherits Rectangle {
     property <length> half: self.height / 2;
     property <length> ix: (self.width - ClockGlyphs.w) / 2;
     property <length> iy: (self.height - ClockGlyphs.h) / 2;
-    property <color> ink: #e9ecf2;
-    property <color> card: #1b1f27;
+    property <color> ink: SaverTheme.ink;
+    property <color> card: SaverTheme.card;
 
     width: 164px;
     height: 220px;
@@ -166,7 +182,7 @@ component FlipDigit inherits Rectangle {
     Rectangle {
         y: root.half - 1px;
         height: 2px;
-        background: #07080b;
+        background: SaverTheme.hinge;
     }
 }
 
@@ -175,7 +191,7 @@ component PlainDigit inherits Image {
     width: ClockGlyphs.w;
     height: ClockGlyphs.h;
     source: ClockGlyphs.digits[root.value];
-    colorize: #e9ecf2;
+    colorize: SaverTheme.ink;
 }
 
 component Colon inherits VerticalLayout {
@@ -187,7 +203,7 @@ component Colon inherits VerticalLayout {
         height: 16px;
         x: 12px;
         border-radius: 8px;
-        background: #9aa3b5;
+        background: SaverTheme.colon;
     }
 }
 
@@ -212,7 +228,7 @@ export component ScreenSaver inherits Rectangle {
     in property <string> weather-temperature;
     in property <string> indoor-temperature;
 
-    background: #000000;
+    background: SaverTheme.bg;
 
     VerticalLayout {
         alignment: center;
@@ -254,7 +270,7 @@ export component ScreenSaver inherits Rectangle {
         Text {
             text: root.date;
             font-size: 28px;
-            color: #8b93a3;
+            color: SaverTheme.muted;
             horizontal-alignment: center;
         }
         if root.weather-temperature != "" || root.indoor-temperature != "": HorizontalLayout {
@@ -266,13 +282,13 @@ export component ScreenSaver inherits Rectangle {
                     text: ClockGlyphs.weather-icon(root.weather-condition);
                     font-family: Icons.family;
                     font-size: 28px;
-                    color: #8b93a3;
+                    color: SaverTheme.muted;
                     vertical-alignment: center;
                 }
                 Text {
                     text: root.weather-temperature;
                     font-size: 28px;
-                    color: #8b93a3;
+                    color: SaverTheme.muted;
                     vertical-alignment: center;
                 }
             }
@@ -282,13 +298,13 @@ export component ScreenSaver inherits Rectangle {
                     text: "\u{F0F54}";
                     font-family: Icons.family;
                     font-size: 28px;
-                    color: #8b93a3;
+                    color: SaverTheme.muted;
                     vertical-alignment: center;
                 }
                 Text {
                     text: root.indoor-temperature;
                     font-size: 28px;
-                    color: #8b93a3;
+                    color: SaverTheme.muted;
                     vertical-alignment: center;
                 }
             }
@@ -311,10 +327,10 @@ export component ForecastView inherits Rectangle {
     in property <string> title;
     in property <string> hint;
 
-    property <color> ink: #e9ecf2;
-    property <color> muted: #8b93a3;
+    property <color> ink: SaverTheme.ink;
+    property <color> muted: SaverTheme.muted;
 
-    background: #000000;
+    background: SaverTheme.bg;
 
     VerticalLayout {
         padding: 32px;
@@ -378,7 +394,7 @@ export component ForecastView inherits Rectangle {
             for day[i] in root.days: Rectangle {
                 horizontal-stretch: 1;
                 border-radius: 16px;
-                background: i == 0 ? #161a22 : #0e1116;
+                background: i == 0 ? SaverTheme.today : SaverTheme.day;
                 VerticalLayout {
                     padding-top: 16px;
                     padding-bottom: 14px;
@@ -420,13 +436,13 @@ export component ForecastView inherits Rectangle {
                             text: "\u{F058C}";
                             font-family: Icons.family;
                             font-size: 16px;
-                            color: #60a5fa;
+                            color: SaverTheme.rain;
                             vertical-alignment: center;
                         }
                         if day.precipitation != "": Text {
                             text: day.precipitation;
                             font-size: 16px;
-                            color: #60a5fa;
+                            color: SaverTheme.rain;
                             vertical-alignment: center;
                         }
                     }

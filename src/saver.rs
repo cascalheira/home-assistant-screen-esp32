@@ -32,6 +32,7 @@ const NVS_CLOCK_24H: &str = "clock24";
 const NVS_WEATHER: &str = "saver_wx";
 const NVS_ROTATE: &str = "saver_rot";
 const NVS_THEME: &str = "theme";
+const NVS_SAVER_THEME: &str = "saver_theme";
 const NVS_SUNRISE: &str = "sunrise";
 const NVS_SUNSET: &str = "sunset";
 
@@ -166,8 +167,10 @@ pub struct Saver {
     /// Last sunrise and sunset from Home Assistant (minutes since midnight),
     /// kept in NVS so the theme switches on time while HA is offline.
     sun_times: Option<(i32, i32)>,
-    /// The theme on screen (None until first applied).
-    dark_shown: Option<bool>,
+    /// The screensaver's theme setting.
+    saver_theme: ThemeMode,
+    /// Dark on screen and on the screensaver (None until first applied).
+    dark_shown: Option<(bool, bool)>,
     /// What auto would show, as last told to the settings page.
     theme_detail_shown: String,
     /// Last time `tick` re-checked the theme (auto changes with the clock).
@@ -212,6 +215,7 @@ impl Saver {
         let h24 = u8_or(NVS_CLOCK_24H, 1) == 1;
         let weather = u8_or(NVS_WEATHER, 0) == 1;
         let theme = ThemeMode::from_u8(u8_or(NVS_THEME, ThemeMode::Dark as u8));
+        let saver_theme = ThemeMode::from_u8(u8_or(NVS_SAVER_THEME, ThemeMode::Dark as u8));
         let u16_of = |key| nvs.as_ref().and_then(|n| n.get_u16(key).ok().flatten());
         let sun_times = u16_of(NVS_SUNRISE)
             .zip(u16_of(NVS_SUNSET))
@@ -235,6 +239,7 @@ impl Saver {
             rotate_secs,
             forecast_ready: false,
             theme,
+            saver_theme,
             sun_up: None,
             sun_times,
             dark_shown: None,
@@ -284,6 +289,18 @@ impl Saver {
         });
         let weak = ui.as_weak();
         let s = saver.clone();
+        ui.on_saver_theme_picked(move |index| {
+            let mut s = s.borrow_mut();
+            let theme = ThemeMode::from_u8(index.clamp(0, 2) as u8);
+            s.saver_theme = theme;
+            s.save_u8(NVS_SAVER_THEME, theme as u8);
+            if let Some(ui) = weak.upgrade() {
+                s.show_settings(&ui);
+                s.apply_theme(&ui);
+            }
+        });
+        let weak = ui.as_weak();
+        let s = saver.clone();
         ui.on_saver_rotate_picked(move |index| {
             let mut s = s.borrow_mut();
             s.set_rotate(ROTATE_OPTIONS[(index.max(0) as usize).min(ROTATE_OPTIONS.len() - 1)]);
@@ -307,6 +324,7 @@ impl Saver {
         ui.set_display_brightness(brightness as i32);
         ui.set_display_brightness_live(brightness as i32);
         ui.set_display_theme(self.theme as i32);
+        ui.set_saver_theme(self.saver_theme as i32);
         let index = ROTATE_OPTIONS.iter().position(|&s| s == self.rotate_secs);
         ui.set_saver_rotate(index.map(|i| i as i32).unwrap_or(-1));
     }
@@ -330,9 +348,9 @@ impl Saver {
         }
     }
 
-    /// Whether the dark theme should show now, and what auto does, for the
+    /// Whether it is day for the auto themes, and what auto does, for the
     /// settings page.
-    fn dark_now(&self) -> (bool, String) {
+    fn daylight(&self) -> (bool, String) {
         let now = local_time().map(|t| t.tm_hour * 60 + t.tm_min);
         let (sun_up, source) = match (self.sun_times, self.sun_up) {
             (Some((rise, set)), _) => (
@@ -353,26 +371,32 @@ impl Saver {
                     .to_string(),
             ),
         };
-        let dark = match self.theme {
-            ThemeMode::Light => false,
-            ThemeMode::Dark => true,
-            ThemeMode::Auto => !sun_up.unwrap_or(false),
-        };
         let now = match sun_up {
             Some(true) => "Now: light.",
             Some(false) => "Now: dark.",
             None => "Dark until the time is known.",
         };
-        (dark, format!("{source}. {now}"))
+        (sun_up.unwrap_or(false), format!("{source}. {now}"))
     }
 
     /// Switches the theme when it should change.
     fn apply_theme(&mut self, ui: &AppWindow) {
-        let (dark, detail) = self.dark_now();
-        if self.dark_shown != Some(dark) {
-            log::info!("{} theme", if dark { "dark" } else { "light" });
-            ui.global::<crate::Theme>().set_dark(dark);
-            self.dark_shown = Some(dark);
+        let (day, detail) = self.daylight();
+        let dark_for = |mode| match mode {
+            ThemeMode::Light => false,
+            ThemeMode::Dark => true,
+            ThemeMode::Auto => !day,
+        };
+        let shown = (dark_for(self.theme), dark_for(self.saver_theme));
+        if self.dark_shown != Some(shown) {
+            log::info!(
+                "{} theme, {} screensaver",
+                if shown.0 { "dark" } else { "light" },
+                if shown.1 { "dark" } else { "light" }
+            );
+            ui.global::<crate::Theme>().set_dark(shown.0);
+            ui.global::<crate::SaverTheme>().set_dark(shown.1);
+            self.dark_shown = Some(shown);
         }
         if detail != self.theme_detail_shown {
             ui.set_display_theme_detail(detail.as_str().into());

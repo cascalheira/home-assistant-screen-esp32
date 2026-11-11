@@ -13,10 +13,10 @@ import {
     SettingRow,
 } from "widgets.slint";
 import { Icons, TileView, ClimateSheet, DimmerSheet, ActionSheet, LevelSlider } from "dashboard.slint";
-import { ScreenSaver, ForecastView } from "clock.slint";
+import { ScreenSaver, ForecastView, SaverTheme } from "clock.slint";
 
 export { NetworkItem, InstanceItem, PageTab, TileData, ModeItem, ActionButton, ForecastDayView }
-export { Theme }
+export { Theme, SaverTheme }
 
 export enum Page { welcome, networks, entry, connecting, result, ha-find, dashboard, settings }
 
@@ -242,6 +242,7 @@ export component AppWindow inherits Window {
     // ---- Screensaver
     in property <int> saver-mode; // 0 off, 1 clock, 2 flip clock
     in property <int> saver-delay; // index into the delay options
+    in property <int> saver-theme: 2; // 0 auto, 1 light, 2 dark
     in property <bool> saver-active;
     in property <bool> saver-flip;
     in property <bool> saver-weather; // forecast screensaver on
@@ -311,6 +312,7 @@ export component AppWindow inherits Window {
     callback saver-mode-picked(int);
     callback saver-delay-picked(int);
     callback saver-weather-picked(int);
+    callback saver-theme-picked(int);
     callback display-brightness-changed(int); // while dragging
     callback display-brightness-committed(int); // on release
     callback display-theme-picked(int);
@@ -1089,6 +1091,15 @@ export component AppWindow inherits Window {
                                 selected: root.saver-rotate;
                                 enabled: root.saver-weather && root.saver-mode != 0;
                                 picked(i) => { root.saver-rotate-picked(i); }
+                            }
+                        }
+                        SettingRow {
+                            label: "Theme";
+                            Segmented {
+                                options: ["Auto", "Light", "Dark"];
+                                selected: root.saver-theme;
+                                enabled: root.saver-mode != 0 || root.saver-weather;
+                                picked(i) => { root.saver-theme-picked(i); }
                             }
                         }
                         SettingRow {

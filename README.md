@@ -49,7 +49,8 @@ Assistant.
    lowest setting still lights the screen; the scale follows how the eye
    sees brightness) and the theme: light, dark, or auto, which is light from
    sunrise to sunset by Home Assistant's `sun.sun` (07:00-19:00 without it).
-   The screensaver and the doorbell stay dark.
+   The screensaver has its own theme setting (auto, light or dark; dark by
+   default). The doorbell video stays dark.
 7. **Doorbell.** When the doorbell rings, the screen wakes and shows its
    camera live (about 3-4 frames a second), with an optional button to open
    the gate or door. Home Assistant turns the camera's RTSP stream into small
