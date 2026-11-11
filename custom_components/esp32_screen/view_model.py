@@ -168,6 +168,8 @@ def tile_view_model(
     if domain == "alarm_control_panel":
         vm["on"] = value.startswith("armed_") or value == "triggered"
         vm["status"] = ALARM_LABELS.get(value, value.replace("_", " ").capitalize())
+        # Language-independent, for the siren icon (status is translated).
+        vm["mode"] = "triggered" if value == "triggered" else ""
         features = int(attrs.get("supported_features") or 0)
         vm["modes"] = [mode for mode, bit in ALARM_MODES if features & bit]
         # A keypad is needed whenever the panel uses a code at all.

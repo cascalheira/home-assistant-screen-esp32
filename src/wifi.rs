@@ -9,6 +9,7 @@
 //! with backoff; new credentials typed into the wizard get a few attempts and
 //! then fail with a reason the UI can show.
 
+use crate::logic::i18n::{tr, trf};
 use std::net::Ipv4Addr;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
@@ -74,14 +75,14 @@ pub enum FailReason {
 impl FailReason {
     pub fn describe(self) -> String {
         match self {
-            Self::WrongPassword => "The password seems to be wrong.".into(),
-            Self::NotFound => "The network is out of range or the name is wrong.".into(),
+            Self::WrongPassword => tr("The password seems to be wrong.").into(),
+            Self::NotFound => tr("The network is out of range or the name is wrong.").into(),
             Self::UnsupportedSecurity => {
-                "The network uses a security mode this screen doesn't support.".into()
+                tr("The network uses a security mode this screen doesn't support.").into()
             }
-            Self::Timeout => "The network didn't respond in time.".into(),
-            Self::Lost => "The connection was lost.".into(),
-            Self::Other(code) => format!("Wi-Fi error (reason {code})."),
+            Self::Timeout => tr("The network didn't respond in time.").into(),
+            Self::Lost => tr("The connection was lost.").into(),
+            Self::Other(code) => trf("Wi-Fi error (reason {}).", &[&code]),
         }
     }
 
@@ -398,7 +399,7 @@ impl Worker {
         let mut resume = None;
         if let State::Connecting { target, .. } = &self.state {
             if !target.saved {
-                self.emit(Event::ScanFailed("Busy connecting".into()));
+                self.emit(Event::ScanFailed(tr("Busy connecting").into()));
                 return;
             }
             resume = Some(target.clone());

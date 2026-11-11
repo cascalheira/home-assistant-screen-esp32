@@ -255,7 +255,7 @@ export component LevelSlider inherits Rectangle {
     }
     if root.show-value && root.style == "brightness": Text {
         x: 14px;
-        text: root.shown >= root.minimum ? root.shown + "%" : "Off";
+        text: root.shown >= root.minimum ? root.shown + "%" : @tr("Off");
         font-size: 15px;
         font-weight: 600;
         // Dark on the (bright) fill, the usual text colour on the track.
@@ -653,14 +653,14 @@ export component ClimateSheet inherits Sheet {
                 alignment: center;
                 width: 260px;
                 Text {
-                    text: root.mode == "off" ? "Off" : root.target == "" ? "–" : root.target + root.unit;
+                    text: root.mode == "off" ? @tr("Off") : root.target == "" ? "–" : root.target + root.unit;
                     font-size: 48px;
                     font-weight: 600;
                     color: root.mode == "off" ? Theme.muted : Icons.tint("climate", root.mode);
                     horizontal-alignment: center;
                 }
                 Text {
-                    text: (root.current == "" ? "" : "Now " + root.current + root.unit)
+                    text: (root.current == "" ? "" : @tr("Now {}", root.current + root.unit))
                         + (root.current != "" && root.humidity != "" ? " · " : "")
                         + (root.humidity == "" ? "" : root.humidity + "%");
                     font-size: 18px;
@@ -742,7 +742,7 @@ export component DimmerSheet inherits Sheet {
             spacing: 20px;
             Text {
                 text: root.live-active ? root.live + "%"
-                    : !root.is-on ? "Off" : root.value >= 0 ? root.value + "%" : "On";
+                    : !root.is-on ? @tr("Off") : root.value >= 0 ? root.value + "%" : @tr("On");
                 font-size: 44px;
                 font-weight: 600;
                 color: root.is-on || root.live-active ? (Theme.dark ? root.tint : root.tint.darker(0.5)) : Theme.muted;
@@ -752,7 +752,7 @@ export component DimmerSheet inherits Sheet {
             if root.can-toggle: VerticalLayout {
                 alignment: center;
                 Button {
-                    text: root.is-on ? "Turn off" : "Turn on";
+                    text: root.is-on ? @tr("Turn off") : @tr("Turn on");
                     clicked => { root.toggle(); }
                 }
             }
@@ -905,7 +905,7 @@ export component ActionSheet inherits Sheet {
                     border-radius: 10px;
                     background: Theme.bg;
                     Text {
-                        text: root.code == "" ? "Code" : root.code;
+                        text: root.code == "" ? @tr("Code") : root.code;
                         font-size: 20px;
                         color: root.code == "" ? Theme.muted : Theme.text;
                         horizontal-alignment: center;

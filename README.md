@@ -58,7 +58,10 @@ Assistant.
    is stored. A forgotten PIN: press **Clear PIN** on the screen's device in
    Home Assistant, or hold BOOT for 5 seconds (which also forgets Wi-Fi).
    Notifications and the doorbell still show on a locked screen.
-8. **Doorbell.** When the doorbell rings, the screen wakes and shows its
+8. **Language.** English or Portuguese (Portugal), under Settings › Display.
+   Automatic follows the language set for the screen in Home Assistant's
+   Screens panel. Home Assistant then sends tile states in that language too.
+9. **Doorbell.** When the doorbell rings, the screen wakes and shows its
    camera live (about 3-4 frames a second), with an optional button to open
    the gate or door. Home Assistant turns the camera's RTSP stream into small
    JPEGs with ffmpeg.

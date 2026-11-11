@@ -13,6 +13,7 @@ pub mod model;
 pub mod tls;
 mod ws;
 
+use crate::logic::i18n::{tr, trf};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -408,6 +409,7 @@ impl Worker {
         if !self.legacy_state {
             msg["screensaver_weather"] = json!(state.weather);
             msg["screensaver_rotate"] = json!(state.rotate_secs);
+            msg["language"] = json!(if state.portuguese { "pt" } else { "en" });
         }
         self.request(msg, Pending::State(state));
     }
@@ -474,7 +476,7 @@ impl Worker {
         match self.phase {
             Phase::Retry { at } if Instant::now() >= at => self.connect(),
             Phase::Handshake { deadline } if Instant::now() >= deadline => {
-                self.fail("Home Assistant didn't answer in time.".into());
+                self.fail(tr("Home Assistant didn't answer in time.").into());
             }
             _ => {}
         }
@@ -533,7 +535,9 @@ impl Worker {
                     let result = auth::submit_mfa(&url, &self.client_id, &flow_id, &code);
                     self.login_result(url, result);
                 }
-                None => self.emit(Event::LoginFailed("The login expired. Start again.".into())),
+                None => self.emit(Event::LoginFailed(
+                    tr("The login expired. Start again.").into(),
+                )),
             },
             Command::Logout => {
                 if let Some(stored) = self.stored.take() {
@@ -562,7 +566,7 @@ impl Worker {
                 value,
             } => {
                 if self.phase != Phase::Live {
-                    self.emit(Event::ActionFailed("Home Assistant is offline.".into()));
+                    self.emit(Event::ActionFailed(tr("Home Assistant is offline.").into()));
                     return;
                 }
                 let mut msg = json!({
@@ -593,7 +597,7 @@ impl Worker {
             Command::DoorbellTest(url) => {
                 self.emit(Event::Doorbell {
                     ring_id: String::new(),
-                    title: "Test video".into(),
+                    title: tr("Test video").into(),
                     timeout_secs: 60,
                     action: String::new(),
                     has_video: true,
@@ -763,14 +767,14 @@ impl Worker {
                     log::warn!("refresh token rejected");
                     self.phase = Phase::Idle;
                     self.emit(Event::Status(Status::NeedsLogin(
-                        "Home Assistant no longer accepts this screen's login. Sign in again."
+                        tr("Home Assistant no longer accepts this screen's login. Sign in again.")
                             .into(),
                     )));
                     return;
                 }
                 Err(e) => {
                     log::warn!("token refresh failed: {e:#}");
-                    return self.fail(format!("Can't reach Home Assistant ({e})."));
+                    return self.fail(trf("Can't reach Home Assistant ({}).", &[&e]));
                 }
             }
         }
@@ -786,7 +790,7 @@ impl Worker {
                     deadline: Instant::now() + CONNECT_TIMEOUT,
                 };
             }
-            Err(e) => self.fail(format!("Can't open a connection ({e}).")),
+            Err(e) => self.fail(trf("Can't open a connection ({}).", &[&e])),
         }
     }
 
@@ -822,7 +826,8 @@ impl Worker {
             log::warn!("Home Assistant presented a different certificate");
             self.phase = Phase::Idle;
             self.emit(Event::Status(Status::NeedsLogin(
-                "Home Assistant's certificate changed. Sign in again to check the new one.".into(),
+                tr("Home Assistant's certificate changed. Sign in again to check the new one.")
+                    .into(),
             )));
             return;
         }
@@ -850,7 +855,7 @@ impl Worker {
     fn send(&mut self, msg: &Value) {
         let Some(ws) = &self.ws else { return };
         if let Err(e) = ws.send(&msg.to_string()) {
-            self.fail(format!("Sending failed ({e})."));
+            self.fail(trf("Sending failed ({}).", &[&e]));
         }
     }
 
@@ -862,7 +867,7 @@ impl Worker {
             }
             WsEvent::Disconnected => {
                 if self.ws.is_some() {
-                    self.fail("Connection lost.".into());
+                    self.fail(tr("Connection lost.").into());
                 }
             }
             WsEvent::Text(text) => match serde_json::from_str::<Value>(&text) {
@@ -892,7 +897,7 @@ impl Worker {
             "auth_invalid" => {
                 // The access token expired or was revoked: get a new one.
                 self.access = None;
-                self.fail("Login expired, renewing.".into());
+                self.fail(tr("Login expired, renewing.").into());
             }
             "result" => self.result(msg),
             "event" => {
@@ -946,7 +951,7 @@ impl Worker {
                 self.emit(Event::Status(Status::NotInstalled));
             }
             Pending::Register | Pending::Subscribe if !success => {
-                self.fail(format!("Home Assistant refused the screen ({message})."));
+                self.fail(trf("Home Assistant refused the screen ({}).", &[&message]));
             }
             Pending::State(state) if !success => {
                 if code == "invalid_format" && !self.legacy_state {

@@ -157,7 +157,7 @@ export component StepChip inherits Rectangle {
 // Top bar of the wizard pages: back arrow, title and the step indicator.
 export component Header inherits Rectangle {
     in property <string> title;
-    in property <string> subtitle: "Step 1 of 2 · Wi-Fi";
+    in property <string> subtitle: @tr("Step 1 of 2 · Wi-Fi");
     in property <bool> show-back: true;
     callback back();
     height: 76px;
@@ -279,7 +279,7 @@ export component Key inherits Rectangle {
 
 // On-screen keyboard. Letter, digit and symbol keys emit `key(text)`.
 export component Keyboard inherits Rectangle {
-    in property <string> enter-label: "Connect";
+    in property <string> enter-label: @tr("Connect");
     in property <bool> enter-enabled: true;
     callback key(string);
     callback backspace();
@@ -368,7 +368,7 @@ export component Keyboard inherits Rectangle {
                 activated(v) => { root.emit(v); }
             }
             Key {
-                label: "space";
+                label: @tr("space");
                 value: " ";
                 horizontal-stretch: 4.5;
                 activated(v) => { root.emit(v); }
@@ -428,7 +428,7 @@ export component EntryField inherits Rectangle {
             border-radius: 8px;
             background: toggle-ta.pressed ? Theme.surface-3 : Theme.surface-2;
             Text {
-                text: root.revealed ? "Hide" : "Show";
+                text: root.revealed ? @tr("Hide") : @tr("Show");
                 font-size: 16px;
                 color: Theme.text;
                 horizontal-alignment: center;

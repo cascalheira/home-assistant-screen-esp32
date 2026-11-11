@@ -246,6 +246,8 @@ def ws_ota_status(
         # Firmware 0.6.0 and later.
         vol.Optional("screensaver_weather"): bool,
         vol.Optional("screensaver_rotate"): vol.In(SCREENSAVER_ROTATE),
+        # Firmware 0.12.0 and later: the language the screen shows.
+        vol.Optional("language"): vol.In(LANGUAGES),
     }
 )
 @callback
@@ -266,7 +268,7 @@ def ws_state(
             key: msg[key]
             for key in (
                 "brightness", "screensaver_mode", "screensaver_delay", "screensaver_active",
-                "screensaver_weather", "screensaver_rotate",
+                "screensaver_weather", "screensaver_rotate", "language",
             )
             if key in msg
         },

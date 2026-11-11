@@ -20,6 +20,7 @@ mod sd;
 mod touch;
 mod wifi;
 
+use crate::logic::i18n::{tr, trf};
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::thread;
@@ -137,9 +138,15 @@ fn main() -> anyhow::Result<()> {
         }
     };
     let sd_status = match sd_card.as_ref().and_then(|c| c.usage()) {
-        Some((total, free)) => format!("{} free of {}", sd::size(free), sd::size(total)),
-        None if sd_card.is_some() => "Mounted".to_string(),
-        None => "None (insert one and restart)".to_string(),
+        Some((total, free)) => trf(
+            "{} free of {}",
+            &[
+                &sd::size(free) as &dyn std::fmt::Display,
+                &sd::size(total) as &dyn std::fmt::Display,
+            ],
+        ),
+        None if sd_card.is_some() => tr("Mounted").to_string(),
+        None => tr("None (insert one and restart)").to_string(),
     };
 
     let window = MinimalSoftwareWindow::new(RepaintBufferType::SwappedBuffers);
@@ -392,6 +399,10 @@ fn main() -> anyhow::Result<()> {
             }
         }
         saver.borrow_mut().tick(&ui, &mut backlight);
+        let language = saver.borrow_mut().take_language_changed();
+        if let Some(portuguese) = language {
+            app.set_language(portuguese);
+        }
         {
             // The PIN is needed again after the screensaver or an idle spell.
             let s = saver.borrow();

@@ -48,6 +48,7 @@ from .const import (
     MANUFACTURER,
     FORECAST_MIN_INTERVAL,
     FORECAST_REFRESH,
+    LANGUAGES,
     SENSOR_FIELDS,
     default_settings,
     STORAGE_KEY,
@@ -56,6 +57,7 @@ from .const import (
 from .firmware import FirmwareImage, FirmwareStore
 from .doorbell import Doorbells
 from .forecast import async_forecast
+from .i18n import localize
 from .notifications import NotificationImages
 from .layout import empty_layout, iter_tiles, upgrade_layout
 from .view_model import SUN_ENTITY, info_payload, resolve_label, tile_view_model
@@ -217,6 +219,16 @@ class ScreenSubscription:
                 self.hass, self._refresh_relative, RELATIVE_TIME_REFRESH
             )
         self.send_settings()
+
+    @callback
+    def send_states(self) -> None:
+        """Resend every tile's state (for example in a new language)."""
+        tiles: dict[str, dict[str, Any]] = {}
+        for tile in self._tiles:
+            vm = self.manager.view_model(self.screen_id, tile)
+            self._sent[tile["id"]] = vm
+            tiles[tile["id"]] = vm
+        self.connection.send_event(self.msg_id, {"kind": "states", "tiles": tiles})
 
     @callback
     def send_settings(self) -> None:
@@ -474,8 +486,13 @@ class ScreenManager:
     def async_device_state(self, screen_id: str, state: dict[str, Any]) -> None:
         """State report from a screen (esp32_screen/state)."""
         if self.device_states.get(screen_id) != state:
+            before = self.language(screen_id)
             self.device_states[screen_id] = state
             self._notify_screen(screen_id)
+            if self.language(screen_id) != before:
+                # Tile texts in the new language.
+                for sub in list(self._subscriptions.get(screen_id, ())):
+                    sub.send_states()
 
     # ---- firmware updates ----------------------------------------------------
 
@@ -625,7 +642,15 @@ class ScreenManager:
         vm = tile_view_model(self.hass, tile, state)
         if tile["kind"] == KIND_CLIMATE and vm["mode"] not in ("", "off"):
             self._last_hvac_mode[(screen_id, tile["id"])] = vm["mode"]
-        return vm
+        return localize(vm, self.language(screen_id))
+
+    def language(self, screen_id: str) -> str:
+        """The screen's language: what it reports, else its HA setting."""
+        reported = (self.device_states.get(screen_id) or {}).get("language")
+        if reported in LANGUAGES:
+            return reported
+        record = self.screens.get(screen_id)
+        return record.settings.get("language", "en") if record else "en"
 
     # ---- editor commands -----------------------------------------------------
 
@@ -650,6 +675,9 @@ class ScreenManager:
         await self.async_save_now()
         if any(key.startswith("doorbell_") for key in changes):
             self.doorbells.async_track()
+        if "language" in changes:
+            for sub in list(self._subscriptions.get(screen_id, ())):
+                sub.send_states()
         for sub in list(self._subscriptions.get(screen_id, ())):
             sub.send_settings()
         self._notify()

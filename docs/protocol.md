@@ -480,7 +480,7 @@ without a brightness sends the last brightness above 0 (100 if none is known).
 ```json
 {"type":"esp32_screen/state","screen_id":"A0B1C2D3E4F5","brightness":80,
  "screensaver_mode":"clock","screensaver_delay":300,"screensaver_active":false,
- "screensaver_weather":true,"screensaver_rotate":20}
+ "screensaver_weather":true,"screensaver_rotate":20,"language":"pt"}
 ```
 
 The screensaver shows the clock (`screensaver_mode` not `off`), the forecast
@@ -490,7 +490,10 @@ only the clock shows.
 
 - **Fields.** All are required, except `screensaver_weather` (bool) and
   `screensaver_rotate` (10, 20, 30 or 60), which firmware before 0.6.0 doesn't
-  send; HA shows those two entities unavailable without them. An integration
+  send; HA shows those two entities unavailable without them. `language`
+  (`en` or `pt`, firmware 0.12.0+) is the language the screen shows; HA sends
+  tile `status` and `detail` texts in it (and resends all states when it
+  changes). Without it, HA uses the screen's `language` setting. An integration
   older than 0.4.0 rejects them with `invalid_format`; the firmware then
   reports without them until the next subscribe. `brightness` is
   0-100, `screensaver_mode` is `off`, `clock` or `flip`, `screensaver_delay` is

@@ -159,6 +159,27 @@ async def control_tests(admin: HAWebSocket, sim: ScreenSim) -> None:
     check(cmd == {"kind": "command", "command": "screensaver_rotate", "value": 60}, "rotation 60 -> command screensaver_rotate 60", str(cmd))
     await expect_error(sim.report_state(screensaver_weather=True, screensaver_rotate=15), "invalid_format",
                        "state with rotation 15 s -> invalid_format")
+
+    # The screen's language: tile texts follow it.
+    mark = sim.mark()
+    await sim.report_state(brightness=80, screensaver_mode="clock", screensaver_delay=300, screensaver_active=False,
+                           screensaver_weather=True, screensaver_rotate=20, language="pt")
+    try:
+        ev = await sim.wait_for(lambda e: e.get("kind") == "states" and len(e["tiles"]) > 3, 5, since=mark)
+        statuses = {vm["status"] for vm in ev["tiles"].values()}
+        check(statuses & {"Ligado", "Desligado", "Aberto", "Fechado"} and not statuses & {"On", "Off", "Open", "Closed"},
+              "language pt reported -> tile texts in Portuguese", str(sorted(statuses))[:200])
+    except TimeoutError:
+        check(False, "language pt reported -> states resent", "no states event")
+    mark = sim.mark()
+    await sim.report_state(brightness=80, screensaver_mode="clock", screensaver_delay=300, screensaver_active=False,
+                           screensaver_weather=True, screensaver_rotate=20, language="en")
+    try:
+        ev = await sim.wait_for(lambda e: e.get("kind") == "states" and len(e["tiles"]) > 3, 5, since=mark)
+        check(any(vm["status"] in ("On", "Off", "Open", "Closed") for vm in ev["tiles"].values()),
+              "language en reported -> tile texts back in English")
+    except TimeoutError:
+        check(False, "language en reported -> states resent", "no states event")
     await sim.report_state(brightness=80, screensaver_mode="clock", screensaver_delay=300, screensaver_active=False)
 
 

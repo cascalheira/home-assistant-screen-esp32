@@ -1,6 +1,7 @@
 //! Username/password login through Home Assistant's auth flow, and token
 //! refresh. See docs/protocol.md section 1.
 
+use crate::logic::i18n::{tr, trf};
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -36,9 +37,9 @@ pub enum LoginError {
 impl LoginError {
     pub fn describe(&self) -> String {
         match self {
-            Self::Unreachable(e) => format!("Couldn't reach Home Assistant ({e})."),
-            Self::InvalidCredentials => "Wrong username or password.".into(),
-            Self::InvalidCode => "That code is not valid.".into(),
+            Self::Unreachable(e) => trf("Couldn't reach Home Assistant ({}).", &[&e]),
+            Self::InvalidCredentials => tr("Wrong username or password.").into(),
+            Self::InvalidCode => tr("That code is not valid.").into(),
             Self::Other(e) => e.clone(),
         }
     }
@@ -143,7 +144,7 @@ fn flow_result(
                     flow_id: flow_id.to_string(),
                 }),
                 (_, "") => Err(LoginError::Other(
-                    "Home Assistant asked for an unsupported login step.".into(),
+                    tr("Home Assistant asked for an unsupported login step.").into(),
                 )),
                 (_, other) => Err(LoginError::Other(format!("Login failed: {other}"))),
             }
@@ -153,7 +154,7 @@ fn flow_result(
             Err(LoginError::Other(format!("Login aborted: {reason}")))
         }
         _ => Err(LoginError::Other(
-            "Unexpected reply from Home Assistant.".into(),
+            tr("Unexpected reply from Home Assistant.").into(),
         )),
     }
 }

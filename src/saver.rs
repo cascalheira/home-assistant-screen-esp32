@@ -8,6 +8,7 @@
 //! and the screen reports its state back. Settings live in NVS (namespace
 //! "display").
 
+use crate::logic::i18n::{tr, trf};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -33,6 +34,8 @@ const NVS_WEATHER: &str = "saver_wx";
 const NVS_ROTATE: &str = "saver_rot";
 const NVS_THEME: &str = "theme";
 const NVS_SAVER_THEME: &str = "saver_theme";
+/// The screen's language: 0 = Home Assistant's setting, 1 English, 2 Portuguese.
+const NVS_UI_LANGUAGE: &str = "ui_lang";
 const NVS_SUNRISE: &str = "sunrise";
 const NVS_SUNSET: &str = "sunset";
 
@@ -113,6 +116,8 @@ pub struct ScreenState {
     pub active: bool,
     pub weather: bool,
     pub rotate_secs: u32,
+    /// The language the screen shows (reported so tile texts match).
+    pub portuguese: bool,
 }
 
 /// Commands from Home Assistant (docs/protocol.md section 6) and the clock
@@ -171,6 +176,12 @@ pub struct Saver {
     sun_times: Option<(i32, i32)>,
     /// The screensaver's theme setting.
     saver_theme: ThemeMode,
+    /// Language setting (see NVS_UI_LANGUAGE); `portuguese` is HA's.
+    ui_language: u8,
+    /// The language applied to the UI (None until first applied).
+    language_shown: Option<bool>,
+    /// Set when the language changed; taken by the main loop.
+    language_changed: Option<bool>,
     /// Dark on screen and on the screensaver (None until first applied).
     dark_shown: Option<(bool, bool)>,
     /// What auto would show, as last told to the settings page.
@@ -218,6 +229,7 @@ impl Saver {
         let weather = u8_or(NVS_WEATHER, 0) == 1;
         let theme = ThemeMode::from_u8(u8_or(NVS_THEME, ThemeMode::Dark as u8));
         let saver_theme = ThemeMode::from_u8(u8_or(NVS_SAVER_THEME, ThemeMode::Dark as u8));
+        let ui_language = u8_or(NVS_UI_LANGUAGE, 0).min(2);
         let u16_of = |key| nvs.as_ref().and_then(|n| n.get_u16(key).ok().flatten());
         let sun_times = u16_of(NVS_SUNRISE)
             .zip(u16_of(NVS_SUNSET))
@@ -242,6 +254,9 @@ impl Saver {
             forecast_ready: false,
             theme,
             saver_theme,
+            ui_language,
+            language_shown: None,
+            language_changed: None,
             sun_up: None,
             sun_times,
             dark_shown: None,
@@ -261,6 +276,19 @@ impl Saver {
         }));
         saver.borrow().show_settings(ui);
         saver.borrow_mut().apply_theme(ui);
+        saver.borrow_mut().apply_language(ui);
+        let weak = ui.as_weak();
+        let s = saver.clone();
+        ui.on_display_language_picked(move |index| {
+            let mut s = s.borrow_mut();
+            let language = index.clamp(0, 2) as u8;
+            s.ui_language = language;
+            s.save_u8(NVS_UI_LANGUAGE, language);
+            if let Some(ui) = weak.upgrade() {
+                s.show_settings(&ui);
+                s.apply_language(&ui);
+            }
+        });
 
         let weak = ui.as_weak();
         let s = saver.clone();
@@ -327,6 +355,7 @@ impl Saver {
         ui.set_display_brightness_live(brightness as i32);
         ui.set_display_theme(self.theme as i32);
         ui.set_saver_theme(self.saver_theme as i32);
+        ui.set_display_language(self.ui_language as i32);
         let index = ROTATE_OPTIONS.iter().position(|&s| s == self.rotate_secs);
         ui.set_saver_rotate(index.map(|i| i as i32).unwrap_or(-1));
     }
@@ -357,26 +386,28 @@ impl Saver {
         let (sun_up, source) = match (self.sun_times, self.sun_up) {
             (Some((rise, set)), _) => (
                 now.map(|now| clock::is_daytime(now, rise, set)),
-                format!(
+                trf(
                     "Light from sunrise ({}) to sunset ({}), from Home Assistant",
-                    clock::hhmm(rise),
-                    clock::hhmm(set)
+                    &[
+                        &clock::hhmm(rise) as &dyn std::fmt::Display,
+                        &clock::hhmm(set) as &dyn std::fmt::Display,
+                    ],
                 ),
             ),
             (None, Some(up)) => (
                 Some(up),
-                "Light while Home Assistant's sun is up".to_string(),
+                tr("Light while Home Assistant's sun is up").to_string(),
             ),
             (None, None) => (
                 now.map(|now| clock::is_daytime(now, LIGHT_FROM * 60, LIGHT_UNTIL * 60)),
-                "Light from 07:00 to 19:00 until Home Assistant sends sunrise and sunset"
+                tr("Light from 07:00 to 19:00 until Home Assistant sends sunrise and sunset")
                     .to_string(),
             ),
         };
         let now = match sun_up {
-            Some(true) => "Now: light.",
-            Some(false) => "Now: dark.",
-            None => "Dark until the time is known.",
+            Some(true) => tr("Now: light."),
+            Some(false) => tr("Now: dark."),
+            None => tr("Dark until the time is known."),
         };
         (sun_up.unwrap_or(false), format!("{source}. {now}"))
     }
@@ -404,6 +435,39 @@ impl Saver {
             ui.set_display_theme_detail(detail.as_str().into());
             self.theme_detail_shown = detail;
         }
+    }
+
+    /// Portuguese on screen: the screen's own choice, else Home Assistant's.
+    fn effective_portuguese(&self) -> bool {
+        match self.ui_language {
+            1 => false,
+            2 => true,
+            _ => self.portuguese,
+        }
+    }
+
+    /// Switches the UI's language when it should change.
+    fn apply_language(&mut self, ui: &AppWindow) {
+        let pt = self.effective_portuguese();
+        if self.language_shown == Some(pt) {
+            return;
+        }
+        log::info!("language: {}", if pt { "Portuguese" } else { "English" });
+        crate::logic::i18n::set_portuguese(pt);
+        if let Err(e) = slint::select_bundled_translation(if pt { "pt" } else { "en" }) {
+            log::warn!("selecting the translation failed: {e:?}");
+        }
+        self.language_shown = Some(pt);
+        self.language_changed = Some(pt);
+        self.theme_detail_shown.clear();
+        self.apply_theme(ui);
+        // Redraw the clock's date in the new language.
+        self.shown_minute = None;
+    }
+
+    /// The new language, once after it changed (the app redoes its texts).
+    pub fn take_language_changed(&mut self) -> Option<bool> {
+        self.language_changed.take()
     }
 
     /// Some screensaver is turned on.
@@ -479,6 +543,7 @@ impl Saver {
             active: self.active,
             weather: self.weather,
             rotate_secs: self.rotate_secs,
+            portuguese: self.effective_portuguese(),
         }
     }
 
@@ -571,6 +636,7 @@ impl Saver {
                         // Redraw the clock in the new format.
                         self.shown_minute = None;
                     }
+                    self.apply_language(ui);
                 }
             }
         }
@@ -718,7 +784,7 @@ impl Saver {
                 month: tm.tm_mon,
                 hour: tm.tm_hour,
             },
-            self.portuguese,
+            self.effective_portuguese(),
             self.h24,
         )
     }

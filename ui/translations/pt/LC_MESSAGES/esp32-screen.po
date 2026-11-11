@@ -1,0 +1,290 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: pt\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "1 min"
+msgstr "1 min"
+
+msgid "10 s"
+msgstr "10 s"
+
+msgid "15 min"
+msgstr "15 min"
+
+msgid "20 s"
+msgstr "20 s"
+
+msgid "30 s"
+msgstr "30 s"
+
+msgid "5 min"
+msgstr "5 min"
+
+msgid "60 s"
+msgstr "60 s"
+
+msgid "7 days"
+msgstr "7 dias"
+
+msgid "About"
+msgstr "Sobre"
+
+msgid "About this screen"
+msgstr "Sobre este ecrã"
+
+msgid "Address"
+msgstr "Endereço"
+
+msgid "Always dark."
+msgstr "Sempre escuro."
+
+msgid "Always light."
+msgstr "Sempre claro."
+
+msgid "Anyone can use the screen; only the settings need the PIN."
+msgstr "Qualquer pessoa pode usar o ecrã; só as definições precisam do PIN."
+
+msgid "Auto"
+msgstr "Auto"
+
+msgid "Automatic"
+msgstr "Automático"
+
+msgid "Brightness"
+msgstr "Brilho"
+
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgid "Change PIN"
+msgstr "Alterar PIN"
+
+msgid "Change network"
+msgstr "Mudar de rede"
+
+msgid "Choose your Wi-Fi network"
+msgstr "Escolha a sua rede Wi-Fi"
+
+msgid "Clock"
+msgstr "Relógio"
+
+msgid "Close"
+msgstr "Fechar"
+
+msgid "Code"
+msgstr "Código"
+
+msgid "Connect"
+msgstr "Ligar"
+
+msgid "Connect to Home Assistant"
+msgstr "Ligar ao Home Assistant"
+
+msgid "Dark"
+msgstr "Escuro"
+
+msgid "Device {}"
+msgstr "Dispositivo {}"
+
+msgid "Display"
+msgstr "Ecrã"
+
+msgid "English"
+msgstr "English"
+
+msgid "Enter address manually"
+msgstr "Introduzir o endereço à mão"
+
+msgid "Enter network name"
+msgstr "Introduzir o nome da rede"
+
+msgid "Firmware"
+msgstr "Firmware"
+
+msgid "Flip clock"
+msgstr "Flip"
+
+msgid "Follows the language set for this screen in Home Assistant."
+msgstr "Segue o idioma definido para este ecrã no Home Assistant."
+
+msgid "For example {}"
+msgstr "Por exemplo {}"
+
+msgid "Forget"
+msgstr "Esquecer"
+
+msgid "Forget {}?"
+msgstr "Esquecer {}?"
+
+msgid "Get started"
+msgstr "Começar"
+
+msgid "Hide"
+msgstr "Ocultar"
+
+msgid "Home Assistant"
+msgstr "Home Assistant"
+
+msgid "IP address"
+msgstr "Endereço IP"
+
+msgid "Language"
+msgstr "Idioma"
+
+msgid "Let's connect this screen to your Wi-Fi network.\nAfter that we'll link it to Home Assistant."
+msgstr "Vamos ligar este ecrã à sua rede Wi-Fi.\nDepois associamo-lo ao Home Assistant."
+
+msgid "Light"
+msgstr "Claro"
+
+msgid "Lock the screens too"
+msgstr "Bloquear também os ecrãs"
+
+msgid "Looking for Home Assistant on your network…"
+msgstr "À procura do Home Assistant na sua rede…"
+
+msgid "Looking for networks…"
+msgstr "À procura de redes…"
+
+msgid "MAC address"
+msgstr "Endereço MAC"
+
+msgid "Name"
+msgstr "Nome"
+
+msgid "Network"
+msgstr "Rede"
+
+msgid "No Home Assistant found automatically. Enter its address instead."
+msgstr "Não foi encontrado nenhum Home Assistant automaticamente. Introduza o endereço."
+
+msgid "No PIN: anyone can open the settings."
+msgstr "Sem PIN: qualquer pessoa pode abrir as definições."
+
+msgid "Not set up"
+msgstr "Não configurado"
+
+msgid "Now {}"
+msgstr "Agora {}"
+
+msgid "Off"
+msgstr "Desligado"
+
+msgid "On"
+msgstr "Ligado"
+
+msgid "Opening…"
+msgstr "A abrir…"
+
+msgid "Other network…"
+msgstr "Outra rede…"
+
+msgid "PIN"
+msgstr "PIN"
+
+msgid "Português"
+msgstr "Português"
+
+msgid "Remove PIN"
+msgstr "Remover PIN"
+
+msgid "Restart"
+msgstr "Reiniciar"
+
+msgid "SD card"
+msgstr "Cartão SD"
+
+msgid "Scanning…"
+msgstr "A procurar…"
+
+msgid "Screensaver"
+msgstr "Proteção de ecrã"
+
+msgid "Searching…"
+msgstr "A procurar…"
+
+msgid "Security"
+msgstr "Segurança"
+
+msgid "Set PIN"
+msgstr "Definir PIN"
+
+msgid "Set up"
+msgstr "Configurar"
+
+msgid "Settings"
+msgstr "Definições"
+
+msgid "Show"
+msgstr "Mostrar"
+
+msgid "Shown as"
+msgstr "Aparece como"
+
+msgid "Sign out"
+msgstr "Terminar sessão"
+
+msgid "Sign out of Home Assistant?"
+msgstr "Terminar a sessão no Home Assistant?"
+
+msgid "Start after"
+msgstr "Começar após"
+
+msgid "Status"
+msgstr "Estado"
+
+msgid "Step 1 of 2 · Wi-Fi"
+msgstr "Passo 1 de 2 · Wi-Fi"
+
+msgid "Step 2 of 2 · Home Assistant"
+msgstr "Passo 2 de 2 · Home Assistant"
+
+msgid "Switch every"
+msgstr "Alternar a cada"
+
+msgid "Tap to close"
+msgstr "Toque para fechar"
+
+msgid "The PIN is also needed to use the screen: after the screensaver, after the screensaver delay without touches, and after a restart. Notifications and the doorbell still show."
+msgstr "O PIN também é necessário para usar o ecrã: depois da proteção de ecrã, depois do tempo de espera sem toques e depois de reiniciar. As notificações e a campainha continuam a aparecer."
+
+msgid "The screen disconnects and goes back to the setup wizard."
+msgstr "O ecrã desliga-se e volta ao assistente de configuração."
+
+msgid "The screen stops showing your devices until you sign in again."
+msgstr "O ecrã deixa de mostrar os seus dispositivos até voltar a iniciar sessão."
+
+msgid "The settings need the PIN. Forgot it? Press Clear PIN on this screen's device in Home Assistant, or hold the BOOT button for 5 seconds."
+msgstr "As definições precisam do PIN. Esqueceu-se? Prima Clear PIN no dispositivo deste ecrã no Home Assistant, ou mantenha o botão BOOT premido durante 5 segundos."
+
+msgid "Theme"
+msgstr "Tema"
+
+msgid "Turn off"
+msgstr "Desligar"
+
+msgid "Turn on"
+msgstr "Ligar"
+
+msgid "Weather forecast"
+msgstr "Previsão do tempo"
+
+msgid "Welcome"
+msgstr "Bem-vindo"
+
+msgid "Wi-Fi"
+msgstr "Wi-Fi"
+
+msgid "space"
+msgstr "espaço"
+
+msgid "{} · firmware {}"
+msgstr "{} · firmware {}"
+
+msgid "↻  Scan again"
+msgstr "↻  Procurar de novo"
+
+msgid "↻  Search again"
+msgstr "↻  Procurar de novo"

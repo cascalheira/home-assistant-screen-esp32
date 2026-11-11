@@ -4,6 +4,7 @@
 //! events into page changes and dashboard updates. Everything here runs on
 //! the UI thread.
 
+use crate::logic::i18n::{tr, trf};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -273,8 +274,8 @@ impl App {
             Some(ssid) => {
                 shared.st.borrow_mut().progress = Progress::Wifi { boot: true };
                 shared.show_progress(
-                    &format!("Connecting to {ssid}…"),
-                    "Using the saved network.",
+                    &trf("Connecting to {}…", &[&ssid]),
+                    tr("Using the saved network."),
                     "",
                 );
                 shared.wifi.send(Command::ConnectSaved);
@@ -307,8 +308,6 @@ impl App {
                     self.screen_commands
                         .borrow_mut()
                         .push(crate::saver::ScreenCommand::ClockFormat { portuguese, h24 });
-                    self.shared.st.borrow_mut().portuguese = portuguese;
-                    self.shared.show_forecast();
                 }
                 ha::Event::Info {
                     sun,
@@ -384,6 +383,14 @@ impl App {
 
     pub fn clear_pin(&self) {
         self.shared.clear_pin();
+    }
+
+    /// The UI language changed: redo the texts the app writes itself.
+    pub fn set_language(&self, portuguese: bool) {
+        self.shared.st.borrow_mut().portuguese = portuguese;
+        self.shared.refresh_settings();
+        self.shared.refresh_dashboard();
+        self.shared.show_forecast();
     }
 
     /// The screensaver started or nobody touched the screen for a while:
@@ -783,57 +790,60 @@ impl Shared {
                 st.security_known,
             )
         };
-        let wifi_step = "Step 1 of 2 · Wi-Fi";
-        let ha_step = "Step 2 of 2 · Home Assistant";
+        let wifi_step = tr("Step 1 of 2 · Wi-Fi");
+        let ha_step = tr("Step 2 of 2 · Home Assistant");
         let url = ha::auth::normalize_url(&url);
         let (title, subtitle, placeholder, enter, toggle) = match mode {
             Entry::WifiSsid => (
-                "Network name".to_string(),
-                format!("{wifi_step} · Enter the exact name (SSID)"),
-                "Network name",
-                "Next",
+                tr("Network name").to_string(),
+                trf("{} · Enter the exact name (SSID)", &[&wifi_step]),
+                tr("Network name"),
+                tr("Next"),
                 false,
             ),
             Entry::WifiPassword => (
-                format!("Password for {ssid}"),
+                trf("Password for {}", &[&ssid]),
                 format!(
                     "{wifi_step} · {}",
                     if known {
-                        "At least 8 characters"
+                        tr("At least 8 characters")
                     } else {
-                        "Leave empty for an open network"
+                        tr("Leave empty for an open network")
                     }
                 ),
-                "Password",
-                "Connect",
+                tr("Password"),
+                tr("Connect"),
                 true,
             ),
             Entry::HaUrl => (
-                "Home Assistant address".to_string(),
+                tr("Home Assistant address").to_string(),
                 format!("{ha_step} · For example http://192.168.1.10:8123"),
                 "http://",
-                "Next",
+                tr("Next"),
                 false,
             ),
             Entry::HaUser => (
-                "Sign in to Home Assistant".to_string(),
+                tr("Sign in to Home Assistant").to_string(),
                 format!("{ha_step} · {url}"),
-                "Username",
-                "Next",
+                tr("Username"),
+                tr("Next"),
                 false,
             ),
             Entry::HaPassword => (
-                format!("Password for {user}"),
+                trf("Password for {}", &[&user]),
                 format!("{ha_step} · {url}"),
-                "Password",
-                "Sign in",
+                tr("Password"),
+                tr("Sign in"),
                 true,
             ),
             Entry::HaMfa => (
-                "Two-factor code".to_string(),
-                format!("{ha_step} · Enter the code from your authenticator app"),
-                "Code",
-                "Verify",
+                tr("Two-factor code").to_string(),
+                trf(
+                    "{} · Enter the code from your authenticator app",
+                    &[&ha_step],
+                ),
+                tr("Code"),
+                tr("Verify"),
                 false,
             ),
         };
@@ -945,7 +955,7 @@ impl Shared {
             }
             Entry::HaMfa => {
                 self.st.borrow_mut().progress = Progress::HaLogin;
-                self.show_progress("Checking the code…", "", "");
+                self.show_progress(tr("Checking the code…"), "", "");
                 self.ha.send(ha::Command::SubmitMfa {
                     code: entry.trim().to_string(),
                 });
@@ -976,9 +986,9 @@ impl Shared {
             st.selected_ssid.clone()
         };
         self.show_progress(
-            &format!("Connecting to {ssid}…"),
-            "This can take a few seconds.",
-            "Cancel",
+            &trf("Connecting to {}…", &[&ssid]),
+            tr("This can take a few seconds."),
+            tr("Cancel"),
         );
         self.wifi.send(Command::Connect { ssid, password });
     }
@@ -1028,20 +1038,20 @@ impl Shared {
                     .collect();
                 self.networks.set_vec(items);
                 ui.set_scan_message(
-                    "No networks found. Move closer to the router, or enter the name by hand."
+                    tr("No networks found. Move closer to the router, or enter the name by hand.")
                         .into(),
                 );
                 ui.set_scanning(false);
             }
             wifi::Event::ScanFailed(reason) => {
-                ui.set_scan_message(format!("Couldn't scan for networks ({reason}).").into());
+                ui.set_scan_message(trf("Couldn't scan for networks ({}).", &[&reason]).into());
                 ui.set_scanning(false);
             }
             wifi::Event::Connecting { ssid, attempt } => {
                 if waiting {
-                    ui.set_status_title(format!("Connecting to {ssid}…").into());
+                    ui.set_status_title(trf("Connecting to {}…", &[&ssid]).into());
                     if attempt > 1 {
-                        ui.set_status_detail(format!("Attempt {attempt}…").into());
+                        ui.set_status_detail(trf("Attempt {}…", &[&attempt]).into());
                     }
                 }
             }
@@ -1051,7 +1061,13 @@ impl Shared {
                 ui.set_ip_address(connection.ip.to_string().into());
                 ui.set_wifi_bars(wifi::bars(connection.rssi));
                 ui.set_wifi_status(rssi_text(connection.rssi));
-                let detail = format!("{} · IP address {}", connection.ssid, connection.ip);
+                let detail = trf(
+                    "{} · IP address {}",
+                    &[
+                        &connection.ssid as &dyn std::fmt::Display,
+                        &connection.ip as &dyn std::fmt::Display,
+                    ],
+                );
                 self.st.borrow_mut().connection = Some(connection);
                 self.ha.send(ha::Command::NetworkUp);
                 if waiting {
@@ -1060,7 +1076,13 @@ impl Shared {
                     if boot && ha_ready {
                         self.show_dashboard();
                     } else {
-                        self.show_result(Outcome::WifiOk, "Connected", &detail, "Continue", "");
+                        self.show_result(
+                            Outcome::WifiOk,
+                            tr("Connected"),
+                            &detail,
+                            tr("Continue"),
+                            "",
+                        );
                     }
                 }
                 self.refresh_dashboard();
@@ -1071,19 +1093,21 @@ impl Shared {
                 delay,
             } => {
                 ui.set_wifi_online(false);
-                ui.set_wifi_status(format!("Reconnecting… {}", reason.describe()).into());
+                ui.set_wifi_status(trf("Reconnecting… {}", &[&reason.describe()]).into());
                 if waiting {
                     ui.set_status_retrying(true);
-                    ui.set_status_title(format!("Can't reach {ssid}").into());
+                    ui.set_status_title(trf("Can't reach {}", &[&ssid]).into());
                     ui.set_status_detail(
-                        format!(
+                        trf(
                             "{} Trying again in {} s.",
-                            reason.describe(),
-                            delay.as_secs()
+                            &[
+                                &reason.describe() as &dyn std::fmt::Display,
+                                &delay.as_secs() as &dyn std::fmt::Display,
+                            ],
                         )
                         .into(),
                     );
-                    ui.set_status_button("Choose another network".into());
+                    ui.set_status_button(tr("Choose another network").into());
                 }
                 self.refresh_dashboard();
             }
@@ -1097,10 +1121,10 @@ impl Shared {
                     }
                     self.show_result(
                         Outcome::WifiFailed,
-                        &format!("Couldn't connect to {ssid}"),
+                        &trf("Couldn't connect to {}", &[&ssid]),
                         &detail,
-                        "Try again",
-                        "Choose another network",
+                        tr("Try again"),
+                        tr("Choose another network"),
                     );
                 }
                 self.refresh_dashboard();
@@ -1138,10 +1162,10 @@ impl Shared {
             }
             ha::Event::LoginFailed(message) => self.show_result(
                 Outcome::HaFailed,
-                "Couldn't sign in",
+                tr("Couldn't sign in"),
                 &message,
-                "Try again",
-                "Change address",
+                tr("Try again"),
+                tr("Change address"),
             ),
             ha::Event::MfaRequired => self.show_entry(Entry::HaMfa, String::new()),
             ha::Event::UntrustedCertificate(fingerprint) => {
@@ -1157,13 +1181,13 @@ impl Shared {
                     .collect();
                 self.show_result(
                     Outcome::HaUntrusted,
-                    "Check the certificate",
-                    &format!(
+                    tr("Check the certificate"),
+                    &trf(
                         "Home Assistant's certificate isn't from a known authority. It may be self-signed. Trust it only if its SHA-256 fingerprint is:\n\n{}",
-                        lines.join("\n")
+                        &[&lines.join("\n")],
                     ),
-                    "Trust",
-                    "Cancel",
+                    tr("Trust"),
+                    tr("Cancel"),
                 );
             }
             ha::Event::LoggedIn => {
@@ -1178,11 +1202,12 @@ impl Shared {
                 self.refresh_settings();
                 self.show_result(
                     Outcome::HaOk,
-                    "Signed in to Home Assistant",
-                    &format!(
-                        "This screen shows up in Home Assistant as \u{201c}{name}\u{201d}. Design its layout under Screens in the sidebar."
+                    tr("Signed in to Home Assistant"),
+                    &trf(
+                        "This screen shows up in Home Assistant as \u{201c}{}\u{201d}. Design its layout under Screens in the sidebar.",
+                        &[&name],
                     ),
-                    "Continue",
+                    tr("Continue"),
                     "",
                 );
             }
@@ -1285,7 +1310,7 @@ impl Shared {
                 ui.set_doorbell_has_frame(false);
                 ui.set_doorbell_status(
                     if has_video {
-                        "Connecting to the camera…"
+                        tr("Connecting to the camera…")
                     } else {
                         ""
                     }
@@ -1306,9 +1331,9 @@ impl Shared {
                     log::warn!("doorbell video lost: {reason}");
                     ui.set_doorbell_status(
                         if ui.get_doorbell_has_frame() {
-                            "The video stopped"
+                            tr("The video stopped")
                         } else {
-                            "No video from the camera"
+                            tr("No video from the camera")
                         }
                         .into(),
                     );
@@ -1340,23 +1365,34 @@ impl Shared {
                 ui.set_dimmer_open(false);
                 ui.set_update_failed(false);
                 ui.set_update_progress(0.0);
-                ui.set_update_title(format!("Updating to {version}").into());
+                ui.set_update_title(trf("Updating to {}", &[&version]).into());
                 ui.set_update_detail(
-                    format!("Installing from {source}. Don't unplug the screen.").into(),
+                    trf(
+                        "Installing from {}. Don't unplug the screen.",
+                        &[&tr(source)],
+                    )
+                    .into(),
                 );
                 ui.set_updating(true);
             }
             Status::Writing(pct) => ui.set_update_progress(pct as f32 / 100.0),
-            Status::Verifying => ui.set_update_detail("Checking the new firmware…".into()),
+            Status::Verifying => ui.set_update_detail(tr("Checking the new firmware…").into()),
             Status::Restarting => {
                 ui.set_update_progress(1.0);
-                ui.set_update_detail("Restarting…".into());
+                ui.set_update_detail(tr("Restarting…").into());
             }
             Status::Failed(error) => {
                 ui.set_update_failed(true);
-                ui.set_update_title("Update failed".into());
+                ui.set_update_title(tr("Update failed").into());
                 ui.set_update_detail(
-                    format!("{error}. The screen keeps running {}.", crate::ota::VERSION).into(),
+                    trf(
+                        "{}. The screen keeps running {}.",
+                        &[
+                            &error as &dyn std::fmt::Display,
+                            &crate::ota::VERSION as &dyn std::fmt::Display,
+                        ],
+                    )
+                    .into(),
                 );
                 ui.set_updating(true);
             }
@@ -1374,12 +1410,12 @@ impl Shared {
         ui.set_ha_configured(st.ha_url.is_some());
         ui.set_ha_url(st.ha_url.clone().unwrap_or_default().into());
         let status = match &st.ha_status {
-            Status::NotConfigured => "Not set up".to_string(),
-            Status::Connecting => "Connecting…".to_string(),
-            Status::Connected => "Connected".to_string(),
-            Status::Offline(reason) => format!("Offline · {reason}"),
+            Status::NotConfigured => tr("Not set up").to_string(),
+            Status::Connecting => tr("Connecting…").to_string(),
+            Status::Connected => tr("Connected").to_string(),
+            Status::Offline(reason) => trf("Offline · {}", &[&reason]),
             Status::NeedsLogin(_) => "Signed out, sign in again".to_string(),
-            Status::NotInstalled => "Integration not installed".to_string(),
+            Status::NotInstalled => tr("Integration not installed").to_string(),
         };
         ui.set_ha_status(status.into());
     }
@@ -1394,46 +1430,46 @@ impl Shared {
         let has_pages = !st.layout.pages.is_empty();
         let (title, detail, button, action) = if st.ha_url.is_none() {
             (
-                "Home Assistant isn't set up".to_string(),
-                "Connect this screen to Home Assistant to show your devices.".to_string(),
-                "Set up",
+                tr("Home Assistant isn't set up").to_string(),
+                tr("Connect this screen to Home Assistant to show your devices.").to_string(),
+                tr("Set up"),
                 DashAction::SetUp,
             )
         } else {
             match &st.ha_status {
                 Status::NeedsLogin(reason) => (
-                    "Sign in again".to_string(),
+                    tr("Sign in again").to_string(),
                     reason.clone(),
-                    "Sign in",
+                    tr("Sign in"),
                     DashAction::SignIn,
                 ),
                 Status::NotInstalled => (
-                    "Install the ESP32 Screen integration".to_string(),
-                    "In Home Assistant open Settings › Devices & services › Add integration, and add ESP32 Screen.".to_string(),
+                    tr("Install the ESP32 Screen integration").to_string(),
+                    tr("In Home Assistant open Settings › Devices & services › Add integration, and add ESP32 Screen.").to_string(),
                     "",
                     DashAction::None,
                 ),
                 Status::Connected if !has_pages => (
-                    "Nothing to show yet".to_string(),
-                    format!(
+                    tr("Nothing to show yet").to_string(),
+                    trf(
                         "In Home Assistant, open Screens in the sidebar and design the layout for \u{201c}{}\u{201d}.",
-                        st.screen_name
+                        &[&st.screen_name],
                     ),
                     "",
                     DashAction::None,
                 ),
                 Status::Offline(reason) if !has_pages => (
-                    "Can't reach Home Assistant".to_string(),
+                    tr("Can't reach Home Assistant").to_string(),
                     reason.clone(),
                     "",
                     DashAction::None,
                 ),
                 _ if !has_pages => (
-                    "Connecting to Home Assistant…".to_string(),
+                    tr("Connecting to Home Assistant…").to_string(),
                     if wifi_up {
                         String::new()
                     } else {
-                        "Waiting for Wi-Fi.".to_string()
+                        tr("Waiting for Wi-Fi.").to_string()
                     },
                     "",
                     DashAction::None,
@@ -1447,11 +1483,11 @@ impl Shared {
         ui.set_dash_message_button(button.into());
 
         let chip = if !wifi_up {
-            "Wi-Fi offline"
+            tr("Wi-Fi offline")
         } else {
             match st.ha_status {
                 Status::Offline(_) if has_pages => "Home Assistant offline",
-                Status::Connecting if has_pages => "Connecting…",
+                Status::Connecting if has_pages => tr("Connecting…"),
                 _ => "",
             }
         };
@@ -1526,7 +1562,7 @@ impl Shared {
         };
         if !state.available {
             if let Some(ui) = self.ui() {
-                ui.set_toast(format!("{} is unavailable.", tile.label).into());
+                ui.set_toast(trf("{} is unavailable.", &[&tile.label]).into());
             }
             return;
         }
@@ -1599,16 +1635,13 @@ impl Shared {
                     .into(),
             })
             .collect();
-        let (title, hint) = match (days.is_empty(), pt) {
-            (false, _) => ("", ""),
-            (true, false) => (
-                "No weather forecast",
-                "Pick a weather entity for this screen in Home Assistant: Screens › Screen settings.",
-            ),
-            (true, true) => (
-                "Sem previsão do tempo",
-                "Escolha uma entidade de meteorologia para este ecrã no Home Assistant: Screens › Screen settings.",
-            ),
+        let (title, hint) = if days.is_empty() {
+            (
+                tr("No weather forecast"),
+                tr("Pick a weather entity for this screen in Home Assistant: Screens › Screen settings."),
+            )
+        } else {
+            ("", "")
         };
         ui.set_forecast_days(ModelRc::new(VecModel::from(days)));
         ui.set_forecast_title(title.into());
@@ -1671,7 +1704,7 @@ impl Shared {
         let code = std::mem::take(&mut self.st.borrow_mut().sheet_code);
         if coded && state.code_required && code.is_empty() {
             if let Some(ui) = self.ui() {
-                ui.set_toast("Enter the code first.".into());
+                ui.set_toast(tr("Enter the code first.").into());
             }
             return;
         }
@@ -1697,11 +1730,11 @@ impl Shared {
         let (buttons, slider): (Vec<ActionButton>, Option<(&str, i32)>) = match tile.kind.as_str() {
             "blind" => (
                 vec![
-                    button("open", "Open", false),
-                    button("stop", "Stop", false),
-                    button("close", "Close", false),
+                    button("open", tr("Open"), false),
+                    button("stop", tr("Stop"), false),
+                    button("close", tr("Close"), false),
                 ],
-                (state.position >= 0).then_some(("Position", state.position)),
+                (state.position >= 0).then_some((tr("Position"), state.position)),
             ),
             "lock" => (
                 vec![
@@ -1716,31 +1749,31 @@ impl Shared {
                     .iter()
                     .map(|m| {
                         let label = match m.as_str() {
-                            "arm_home" => "Home",
-                            "arm_away" => "Away",
-                            "arm_night" => "Night",
-                            "arm_vacation" => "Vacation",
+                            "arm_home" => tr("Home"),
+                            "arm_away" => tr("Away"),
+                            "arm_night" => tr("Night"),
+                            "arm_vacation" => tr("Vacation"),
                             _ => "Arm",
                         };
                         button(m, label, false)
                     })
                     .collect();
-                buttons.push(button("disarm", "Disarm", state.on));
+                buttons.push(button("disarm", tr("Disarm"), state.on));
                 (buttons, None)
             }
             "media" => (
                 vec![
-                    button("previous", "Previous", false),
+                    button("previous", tr("Previous"), false),
                     // "pause" only picks the pause icon; both send play_pause.
                     button(
                         if state.on { "pause" } else { "play_pause" },
-                        if state.on { "Pause" } else { "Play" },
+                        if state.on { tr("Pause") } else { tr("Play") },
                         true,
                     ),
-                    button("next", "Next", false),
-                    button("toggle", "Power", false),
+                    button("next", tr("Next"), false),
+                    button("toggle", tr("Power"), false),
                 ],
-                (state.volume >= 0).then_some(("Volume", state.volume)),
+                (state.volume >= 0).then_some((tr("Volume"), state.volume)),
             ),
             _ => (Vec::new(), None),
         };
@@ -1826,10 +1859,10 @@ impl Shared {
     fn start_pin(&self, flow: PinFlow) {
         let Some(ui) = self.ui() else { return };
         let (title, message) = match &flow {
-            PinFlow::UnlockSettings => ("Enter the PIN to open the settings", ""),
-            PinFlow::UnlockScreens => ("Enter the PIN", ""),
-            PinFlow::NewFirst => ("Choose a PIN", "4 to 8 digits."),
-            PinFlow::NewConfirm(_) => ("Enter the new PIN again", ""),
+            PinFlow::UnlockSettings => (tr("Enter the PIN to open the settings"), ""),
+            PinFlow::UnlockScreens => (tr("Enter the PIN"), ""),
+            PinFlow::NewFirst => (tr("Choose a PIN"), tr("4 to 8 digits.")),
+            PinFlow::NewConfirm(_) => (tr("Enter the new PIN again"), ""),
         };
         ui.set_pin_title(title.into());
         ui.set_pin_message(message.into());
@@ -1898,12 +1931,16 @@ impl Shared {
                             self.set_page(Page::Settings);
                         }
                     }
-                    Err(crate::lock::Refused::Wrong(left)) => self.show_pin_entry(Some(format!(
-                        "Wrong PIN. {left} {} left before a wait.",
-                        if left == 1 { "try" } else { "tries" }
-                    ))),
-                    Err(crate::lock::Refused::Wait(secs)) => self.show_pin_entry(Some(format!(
-                        "Too many wrong PINs. Try again in {secs} s."
+                    Err(crate::lock::Refused::Wrong(left)) => {
+                        self.show_pin_entry(Some(if left == 1 {
+                            tr("Wrong PIN. 1 try left before a wait.").to_string()
+                        } else {
+                            trf("Wrong PIN. {} tries left before a wait.", &[&left])
+                        }))
+                    }
+                    Err(crate::lock::Refused::Wait(secs)) => self.show_pin_entry(Some(trf(
+                        "Too many wrong PINs. Try again in {} s.",
+                        &[&secs],
                     ))),
                 }
             }
@@ -1911,7 +1948,7 @@ impl Shared {
                 if crate::logic::pin::valid(&entry) {
                     self.start_pin(PinFlow::NewConfirm(entry));
                 } else {
-                    self.show_pin_entry(Some("Use 4 to 8 digits.".into()));
+                    self.show_pin_entry(Some(tr("Use 4 to 8 digits.").into()));
                 }
             }
             PinFlow::NewConfirm(first) => {
@@ -1921,7 +1958,9 @@ impl Shared {
                     self.refresh_settings();
                 } else {
                     self.start_pin(PinFlow::NewFirst);
-                    self.show_pin_entry(Some("The two PINs were different. Choose a PIN.".into()));
+                    self.show_pin_entry(Some(
+                        tr("The two PINs were different. Choose a PIN.").into(),
+                    ));
                 }
             }
         }
@@ -2226,23 +2265,30 @@ fn tabs_too_wide(tabs: &[PageTab]) -> bool {
 
 fn mode_label(mode: &str) -> &'static str {
     match mode {
-        "off" => "Off",
-        "heat" => "Heat",
-        "cool" => "Cool",
-        "heat_cool" => "Heat/Cool",
-        "auto" => "Auto",
-        "dry" => "Dry",
-        "fan_only" => "Fan",
+        "off" => tr("Off"),
+        "heat" => tr("Heat"),
+        "cool" => tr("Cool"),
+        "heat_cool" => tr("Heat/Cool"),
+        "auto" => tr("Auto"),
+        "dry" => tr("Dry"),
+        "fan_only" => tr("Fan"),
         _ => "Other",
     }
 }
 
 fn rssi_text(rssi: i8) -> SharedString {
     let quality = match wifi::bars(rssi) {
-        4 => "Excellent",
-        3 => "Good",
-        2 => "Fair",
-        _ => "Weak",
+        4 => tr("Excellent"),
+        3 => tr("Good"),
+        2 => tr("Fair"),
+        _ => tr("Weak"),
     };
-    format!("{quality} signal · {rssi} dBm").into()
+    trf(
+        "{} signal · {} dBm",
+        &[
+            &quality as &dyn std::fmt::Display,
+            &rssi as &dyn std::fmt::Display,
+        ],
+    )
+    .into()
 }

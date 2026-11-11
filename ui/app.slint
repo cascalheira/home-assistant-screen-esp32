@@ -226,12 +226,12 @@ export component AppWindow inherits Window {
 
     // ---- Settings page
     property <[{glyph: string, title: string}]> settings-sections: [
-        { glyph: "\u{F05A9}", title: "Wi-Fi" },
-        { glyph: "\u{F07D0}", title: "Home Assistant" },
-        { glyph: "\u{F0379}", title: "Display" },
-        { glyph: "\u{F0150}", title: "Screensaver" },
-        { glyph: "\u{F033E}", title: "Security" },
-        { glyph: "\u{F02FD}", title: "About" },
+        { glyph: "\u{F05A9}", title: @tr("Wi-Fi") },
+        { glyph: "\u{F07D0}", title: @tr("Home Assistant") },
+        { glyph: "\u{F0379}", title: @tr("Display") },
+        { glyph: "\u{F0150}", title: @tr("Screensaver") },
+        { glyph: "\u{F033E}", title: @tr("Security") },
+        { glyph: "\u{F02FD}", title: @tr("About") },
     ];
     in-out property <int> settings-section: 0;
     // Display: brightness 1-100 (the screen's own scale, 0 = off from HA),
@@ -240,6 +240,7 @@ export component AppWindow inherits Window {
     in-out property <int> display-brightness-live: 100;
     in property <int> display-theme: 2;
     in property <string> display-theme-detail; // what auto does right now
+    in property <int> display-language; // 0 automatic (HA), 1 English, 2 Portuguese
     // Security: a PIN is set; it also locks the dashboard.
     in property <bool> security-has-pin;
     in property <bool> security-lock-screens;
@@ -329,6 +330,7 @@ export component AppWindow inherits Window {
     callback display-brightness-changed(int); // while dragging
     callback display-brightness-committed(int); // on release
     callback display-theme-picked(int);
+    callback display-language-picked(int);
     callback restart();
     callback security-set-pin();
     callback security-remove-pin();
@@ -360,13 +362,13 @@ export component AppWindow inherits Window {
             spacing: 18px;
             alignment: center;
             Text {
-                text: "Welcome";
+                text: @tr("Welcome");
                 font-size: 48px;
                 font-weight: 600;
                 color: Theme.text;
             }
             Text {
-                text: "Let's connect this screen to your Wi-Fi network.\nAfter that we'll link it to Home Assistant.";
+                text: @tr("Let's connect this screen to your Wi-Fi network.\nAfter that we'll link it to Home Assistant.");
                 font-size: 20px;
                 color: Theme.muted;
                 wrap: word-wrap;
@@ -378,18 +380,18 @@ export component AppWindow inherits Window {
                 padding-bottom: 18px;
                 StepChip {
                     number: "1";
-                    label: "Wi-Fi";
+                    label: @tr("Wi-Fi");
                     active: true;
                 }
                 StepChip {
                     number: "2";
-                    label: "Home Assistant";
+                    label: @tr("Home Assistant");
                 }
             }
             HorizontalLayout {
                 alignment: start;
                 Button {
-                    text: "Get started";
+                    text: @tr("Get started");
                     primary: true;
                     min-button-width: 220px;
                     clicked => { root.start-setup(); }
@@ -399,7 +401,7 @@ export component AppWindow inherits Window {
         Text {
             x: 48px;
             y: parent.height - 44px;
-            text: "Device " + root.mac-address;
+            text: @tr("Device {}", root.mac-address);
             font-size: 14px;
             color: Theme.muted;
         }
@@ -409,7 +411,7 @@ export component AppWindow inherits Window {
     if root.page == Page.networks: Rectangle {
         VerticalLayout {
             Header {
-                title: "Choose your Wi-Fi network";
+                title: @tr("Choose your Wi-Fi network");
                 back => {
                     root.page = root.ha-configured && root.wifi-online ? Page.settings
                         : root.wifi-online ? Page.ha-find : Page.welcome;
@@ -422,7 +424,7 @@ export component AppWindow inherits Window {
                     background: rescan-ta.pressed ? Theme.surface-3 : Theme.surface-2;
                     opacity: root.scanning ? 0.5 : 1;
                     Text {
-                        text: root.scanning ? "Scanning…" : "↻  Scan again";
+                        text: root.scanning ? @tr("Scanning…") : @tr("↻  Scan again");
                         font-size: 16px;
                         color: Theme.text;
                         horizontal-alignment: center;
@@ -444,7 +446,7 @@ export component AppWindow inherits Window {
                         LoadingDots { }
                     }
                     Text {
-                        text: root.scanning ? "Looking for networks…" : root.scan-message;
+                        text: root.scanning ? @tr("Looking for networks…") : root.scan-message;
                         font-size: 20px;
                         color: Theme.muted;
                         horizontal-alignment: center;
@@ -452,7 +454,7 @@ export component AppWindow inherits Window {
                     if !root.scanning: HorizontalLayout {
                         alignment: center;
                         Button {
-                            text: "Enter network name";
+                            text: @tr("Enter network name");
                             clicked => { root.choose-hidden(); }
                         }
                     }
@@ -465,7 +467,7 @@ export component AppWindow inherits Window {
                             clicked => { root.choose-network(item); }
                         }
                         NetworkRow {
-                            item: { ssid: "Other network…", bars: 0, secure: false };
+                            item: { ssid: @tr("Other network…"), bars: 0, secure: false };
                             clicked => { root.choose-hidden(); }
                         }
                     }
@@ -596,8 +598,8 @@ export component AppWindow inherits Window {
     if root.page == Page.ha-find: Rectangle {
         VerticalLayout {
             Header {
-                title: "Connect to Home Assistant";
-                subtitle: "Step 2 of 2 · Home Assistant";
+                title: @tr("Connect to Home Assistant");
+                subtitle: @tr("Step 2 of 2 · Home Assistant");
                 back => { root.ha-find-back(); }
                 Rectangle {
                     width: 132px;
@@ -607,7 +609,7 @@ export component AppWindow inherits Window {
                     background: search-ta.pressed ? Theme.surface-3 : Theme.surface-2;
                     opacity: root.ha-searching ? 0.5 : 1;
                     Text {
-                        text: root.ha-searching ? "Searching…" : "↻  Search again";
+                        text: root.ha-searching ? @tr("Searching…") : @tr("↻  Search again");
                         font-size: 16px;
                         color: Theme.text;
                         horizontal-alignment: center;
@@ -628,7 +630,7 @@ export component AppWindow inherits Window {
                         spacing: 18px;
                         LoadingDots { y: 4px; }
                         Text {
-                            text: "Looking for Home Assistant on your network…";
+                            text: @tr("Looking for Home Assistant on your network…");
                             font-size: 18px;
                             color: Theme.muted;
                         }
@@ -639,7 +641,7 @@ export component AppWindow inherits Window {
                         padding-top: 20px;
                         padding-bottom: 8px;
                         Text {
-                            text: "No Home Assistant found automatically. Enter its address instead.";
+                            text: @tr("No Home Assistant found automatically. Enter its address instead.");
                             font-size: 18px;
                             color: Theme.muted;
                             wrap: word-wrap;
@@ -653,8 +655,8 @@ export component AppWindow inherits Window {
                     }
                     ListRow {
                         glyph: "\u{F030C}";
-                        title: "Enter address manually";
-                        subtitle: "For example http://192.168.1.10:8123";
+                        title: @tr("Enter address manually");
+                        subtitle: @tr("For example {}", "http://192.168.1.10:8123");
                         clicked => { root.ha-manual(); }
                     }
                 }
@@ -900,8 +902,8 @@ export component AppWindow inherits Window {
     if root.page == Page.settings: Rectangle {
         VerticalLayout {
             Header {
-                title: "Settings";
-                subtitle: root.screen-name + " · firmware " + root.firmware-version;
+                title: @tr("Settings");
+                subtitle: @tr("{} · firmware {}", root.screen-name, root.firmware-version);
                 back => { root.page = Page.dashboard; }
             }
             HorizontalLayout {
@@ -956,7 +958,7 @@ export component AppWindow inherits Window {
                         padding: 22px;
                         spacing: 12px;
                         HorizontalLayout {
-                            SectionTitle { text: "Wi-Fi"; }
+                            SectionTitle { text: @tr("Wi-Fi"); }
                             SignalBars {
                                 y: 6px;
                                 bars: root.wifi-online ? root.wifi-bars : 0;
@@ -964,15 +966,15 @@ export component AppWindow inherits Window {
                             }
                         }
                         InfoRow {
-                            label: "Network";
+                            label: @tr("Network");
                             value: root.wifi-ssid;
                         }
                         InfoRow {
-                            label: "Status";
+                            label: @tr("Status");
                             value: root.wifi-status;
                         }
                         InfoRow {
-                            label: "IP address";
+                            label: @tr("IP address");
                             value: root.ip-address;
                         }
                         Rectangle { vertical-stretch: 1; }
@@ -980,11 +982,11 @@ export component AppWindow inherits Window {
                             spacing: 12px;
                             alignment: start;
                             Button {
-                                text: "Change network";
+                                text: @tr("Change network");
                                 clicked => { root.change-network(); }
                             }
                             Button {
-                                text: "Forget";
+                                text: @tr("Forget");
                                 destructive: true;
                                 min-button-width: 120px;
                                 clicked => { root.confirm-forget = true; }
@@ -996,29 +998,29 @@ export component AppWindow inherits Window {
                     if root.settings-section == 1: VerticalLayout {
                         padding: 22px;
                         spacing: 12px;
-                        SectionTitle { text: "Home Assistant"; }
+                        SectionTitle { text: @tr("Home Assistant"); }
                         InfoRow {
-                            label: "Address";
-                            value: root.ha-configured ? root.ha-url : "Not set up";
+                            label: @tr("Address");
+                            value: root.ha-configured ? root.ha-url : @tr("Not set up");
                         }
                         InfoRow {
-                            label: "Status";
+                            label: @tr("Status");
                             value: root.ha-status;
                         }
                         InfoRow {
-                            label: "Shown as";
+                            label: @tr("Shown as");
                             value: root.screen-name;
                         }
                         Rectangle { vertical-stretch: 1; }
                         HorizontalLayout {
                             alignment: start;
                             if root.ha-configured: Button {
-                                text: "Sign out";
+                                text: @tr("Sign out");
                                 destructive: true;
                                 clicked => { root.confirm-sign-out = true; }
                             }
                             if !root.ha-configured: Button {
-                                text: "Set up";
+                                text: @tr("Set up");
                                 primary: true;
                                 clicked => { root.ha-sign-in(); }
                             }
@@ -1030,7 +1032,7 @@ export component AppWindow inherits Window {
                         padding: 22px;
                         spacing: 12px;
                         HorizontalLayout {
-                            SectionTitle { text: "Brightness"; }
+                            SectionTitle { text: @tr("Brightness"); }
                             Text {
                                 text: root.display-brightness-live + "%";
                                 font-size: 18px;
@@ -1068,18 +1070,28 @@ export component AppWindow inherits Window {
                             }
                         }
                         Rectangle { height: 8px; }
-                        SectionTitle { text: "Theme"; }
+                        SectionTitle { text: @tr("Theme"); }
                         Segmented {
-                            options: ["Auto", "Light", "Dark"];
+                            options: [@tr("Auto"), @tr("Light"), @tr("Dark")];
                             selected: root.display-theme;
                             picked(i) => { root.display-theme-picked(i); }
                         }
                         Text {
                             text: root.display-theme == 0 ? root.display-theme-detail
-                                : root.display-theme == 1 ? "Always light." : "Always dark.";
+                                : root.display-theme == 1 ? @tr("Always light.") : @tr("Always dark.");
                             font-size: 15px;
                             color: Theme.muted;
                             wrap: word-wrap;
+                        }
+                        Rectangle { height: 4px; }
+                        SettingRow {
+                            label: @tr("Language");
+                            Segmented {
+                                // Language names stay in their own language.
+                                options: [@tr("Automatic"), "English", "Português"];
+                                selected: root.display-language;
+                                picked(i) => { root.display-language-picked(i); }
+                            }
                         }
                         Rectangle { vertical-stretch: 1; }
                     }
@@ -1088,45 +1100,45 @@ export component AppWindow inherits Window {
                     if root.settings-section == 3: VerticalLayout {
                         padding: 22px;
                         spacing: 14px;
-                        SectionTitle { text: "Screensaver"; }
+                        SectionTitle { text: @tr("Screensaver"); }
                         SettingRow {
-                            label: "Clock";
+                            label: @tr("Clock");
                             Segmented {
-                                options: ["Off", "Clock", "Flip clock"];
+                                options: [@tr("Off"), @tr("Clock"), @tr("Flip clock")];
                                 selected: root.saver-mode;
                                 picked(i) => { root.saver-mode-picked(i); }
                             }
                         }
                         SettingRow {
-                            label: "Weather forecast";
+                            label: @tr("Weather forecast");
                             Segmented {
-                                options: ["Off", "7 days"];
+                                options: [@tr("Off"), @tr("7 days")];
                                 selected: root.saver-weather ? 1 : 0;
                                 picked(i) => { root.saver-weather-picked(i); }
                             }
                         }
                         SettingRow {
-                            label: "Switch every";
+                            label: @tr("Switch every");
                             Segmented {
-                                options: ["10 s", "20 s", "30 s", "60 s"];
+                                options: [@tr("10 s"), @tr("20 s"), @tr("30 s"), @tr("60 s")];
                                 selected: root.saver-rotate;
                                 enabled: root.saver-weather && root.saver-mode != 0;
                                 picked(i) => { root.saver-rotate-picked(i); }
                             }
                         }
                         SettingRow {
-                            label: "Theme";
+                            label: @tr("Theme");
                             Segmented {
-                                options: ["Auto", "Light", "Dark"];
+                                options: [@tr("Auto"), @tr("Light"), @tr("Dark")];
                                 selected: root.saver-theme;
                                 enabled: root.saver-mode != 0 || root.saver-weather;
                                 picked(i) => { root.saver-theme-picked(i); }
                             }
                         }
                         SettingRow {
-                            label: "Start after";
+                            label: @tr("Start after");
                             Segmented {
-                                options: ["1 min", "5 min", "15 min"];
+                                options: [@tr("1 min"), @tr("5 min"), @tr("15 min")];
                                 selected: root.saver-delay;
                                 enabled: root.saver-mode != 0 || root.saver-weather;
                                 picked(i) => { root.saver-delay-picked(i); }
@@ -1139,27 +1151,27 @@ export component AppWindow inherits Window {
                     if root.settings-section == 4: VerticalLayout {
                         padding: 22px;
                         spacing: 14px;
-                        SectionTitle { text: "PIN"; }
+                        SectionTitle { text: @tr("PIN"); }
                         Text {
                             text: root.security-has-pin
-                                ? "The settings need the PIN. Forgot it? Press Clear PIN on this screen's device in Home Assistant, or hold the BOOT button for 5 seconds."
-                                : "No PIN: anyone can open the settings.";
+                                ? @tr("The settings need the PIN. Forgot it? Press Clear PIN on this screen's device in Home Assistant, or hold the BOOT button for 5 seconds.")
+                                : @tr("No PIN: anyone can open the settings.");
                             font-size: 15px;
                             color: Theme.muted;
                             wrap: word-wrap;
                         }
                         if root.security-has-pin: SettingRow {
-                            label: "Lock the screens too";
+                            label: @tr("Lock the screens too");
                             Segmented {
-                                options: ["Off", "On"];
+                                options: [@tr("Off"), @tr("On")];
                                 selected: root.security-lock-screens ? 1 : 0;
                                 picked(i) => { root.security-lock-screens-picked(i); }
                             }
                         }
                         if root.security-has-pin: Text {
                             text: root.security-lock-screens
-                                ? "The PIN is also needed to use the screen: after the screensaver, after the screensaver delay without touches, and after a restart. Notifications and the doorbell still show."
-                                : "Anyone can use the screen; only the settings need the PIN.";
+                                ? @tr("The PIN is also needed to use the screen: after the screensaver, after the screensaver delay without touches, and after a restart. Notifications and the doorbell still show.")
+                                : @tr("Anyone can use the screen; only the settings need the PIN.");
                             font-size: 15px;
                             color: Theme.muted;
                             wrap: word-wrap;
@@ -1169,12 +1181,12 @@ export component AppWindow inherits Window {
                             spacing: 12px;
                             alignment: start;
                             Button {
-                                text: root.security-has-pin ? "Change PIN" : "Set PIN";
+                                text: root.security-has-pin ? @tr("Change PIN") : @tr("Set PIN");
                                 primary: !root.security-has-pin;
                                 clicked => { root.security-set-pin(); }
                             }
                             if root.security-has-pin: Button {
-                                text: "Remove PIN";
+                                text: @tr("Remove PIN");
                                 destructive: true;
                                 clicked => { root.security-remove-pin(); }
                             }
@@ -1185,28 +1197,28 @@ export component AppWindow inherits Window {
                     if root.settings-section == 5: VerticalLayout {
                         padding: 22px;
                         spacing: 12px;
-                        SectionTitle { text: "About this screen"; }
+                        SectionTitle { text: @tr("About this screen"); }
                         InfoRow {
-                            label: "Name";
+                            label: @tr("Name");
                             value: root.screen-name;
                         }
                         InfoRow {
-                            label: "MAC address";
+                            label: @tr("MAC address");
                             value: root.mac-address;
                         }
                         InfoRow {
-                            label: "Firmware";
+                            label: @tr("Firmware");
                             value: root.firmware-version;
                         }
                         InfoRow {
-                            label: "SD card";
+                            label: @tr("SD card");
                             value: root.sd-status;
                         }
                         Rectangle { vertical-stretch: 1; }
                         HorizontalLayout {
                             alignment: start;
                             Button {
-                                text: "Restart";
+                                text: @tr("Restart");
                                 clicked => { root.restart(); }
                             }
                         }
@@ -1227,7 +1239,7 @@ export component AppWindow inherits Window {
                     padding: 28px;
                     spacing: 14px;
                     Text {
-                        text: root.confirm-forget ? "Forget " + root.wifi-ssid + "?" : "Sign out of Home Assistant?";
+                        text: root.confirm-forget ? @tr("Forget {}?", root.wifi-ssid) : @tr("Sign out of Home Assistant?");
                         font-size: 24px;
                         font-weight: 600;
                         color: Theme.text;
@@ -1235,8 +1247,8 @@ export component AppWindow inherits Window {
                     }
                     Text {
                         text: root.confirm-forget
-                            ? "The screen disconnects and goes back to the setup wizard."
-                            : "The screen stops showing your devices until you sign in again.";
+                            ? @tr("The screen disconnects and goes back to the setup wizard.")
+                            : @tr("The screen stops showing your devices until you sign in again.");
                         font-size: 16px;
                         color: Theme.muted;
                         wrap: word-wrap;
@@ -1246,14 +1258,14 @@ export component AppWindow inherits Window {
                         spacing: 12px;
                         alignment: end;
                         Button {
-                            text: "Cancel";
+                            text: @tr("Cancel");
                             clicked => {
                                 root.confirm-forget = false;
                                 root.confirm-sign-out = false;
                             }
                         }
                         Button {
-                            text: root.confirm-forget ? "Forget" : "Sign out";
+                            text: root.confirm-forget ? @tr("Forget") : @tr("Sign out");
                             destructive: true;
                             clicked => {
                                 if (root.confirm-forget) {
@@ -1320,7 +1332,7 @@ export component AppWindow inherits Window {
                 if root.pin-cancellable: HorizontalLayout {
                     alignment: start;
                     Button {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => { root.pin-cancel(); }
                     }
                 }
@@ -1461,7 +1473,7 @@ export component AppWindow inherits Window {
                     overflow: elide;
                 }
                 Text {
-                    text: "Tap to close";
+                    text: @tr("Tap to close");
                     font-size: 14px;
                     color: Theme.muted;
                     horizontal-alignment: right;
@@ -1525,7 +1537,7 @@ export component AppWindow inherits Window {
                     horizontal-stretch: 1;
                 }
                 if root.doorbell-action != "": Button {
-                    text: root.doorbell-action-state == 1 ? "Opening…"
+                    text: root.doorbell-action-state == 1 ? @tr("Opening…")
                         : root.doorbell-action-state == 2 ? "✓ " + root.doorbell-action
                         : root.doorbell-action;
                     primary: true;
@@ -1534,7 +1546,7 @@ export component AppWindow inherits Window {
                     clicked => { root.doorbell-action-pressed(); }
                 }
                 Button {
-                    text: "Close";
+                    text: @tr("Close");
                     min-button-width: 120px;
                     clicked => { root.doorbell-closed(); }
                 }
@@ -1586,7 +1598,7 @@ export component AppWindow inherits Window {
             if root.update-failed: HorizontalLayout {
                 alignment: center;
                 Button {
-                    text: "Close";
+                    text: @tr("Close");
                     clicked => { root.updating = false; }
                 }
             }

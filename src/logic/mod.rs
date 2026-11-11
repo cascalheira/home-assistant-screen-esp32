@@ -4,6 +4,7 @@
 pub mod backlight;
 pub mod climate;
 pub mod clock;
+pub mod i18n;
 pub mod image;
 pub mod net;
 pub mod pin;
