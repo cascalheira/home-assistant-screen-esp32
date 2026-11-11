@@ -127,6 +127,9 @@ pub enum Event {
         indoor: String,
         /// `sun.sun`: whether the sun is up (None: no sun entity).
         sun: Option<bool>,
+        /// Sunrise and sunset, minutes since midnight (None: not sent).
+        sunrise: Option<i32>,
+        sunset: Option<i32>,
     },
     /// Daily forecast for the screensaver (section 7).
     Forecast(model::Forecast),
@@ -1141,6 +1144,8 @@ impl Worker {
                         Some("below_horizon") => Some(false),
                         _ => None,
                     },
+                    sunrise: crate::logic::clock::parse_hhmm(&text("sunrise")),
+                    sunset: crate::logic::clock::parse_hhmm(&text("sunset")),
                 });
             }
             other => log::debug!("ignoring screen event {other:?}"),

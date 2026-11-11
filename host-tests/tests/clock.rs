@@ -74,3 +74,20 @@ fn short_day_names() {
     assert_eq!(weekday_short(6, true), "Sáb");
     assert_eq!(weekday_short(7, false), "");
 }
+
+#[test]
+fn sunrise_and_sunset() {
+    use esp32_screen_host_tests::logic::clock::{hhmm, is_daytime, parse_hhmm};
+    assert_eq!(parse_hhmm("07:42"), Some(462));
+    assert_eq!(parse_hhmm("24:00"), None);
+    assert_eq!(parse_hhmm(""), None);
+    assert_eq!(hhmm(462), "07:42");
+    let (rise, set) = (parse_hhmm("07:42").unwrap(), parse_hhmm("17:31").unwrap());
+    assert!(!is_daytime(rise - 1, rise, set));
+    assert!(is_daytime(rise, rise, set));
+    assert!(is_daytime(12 * 60, rise, set));
+    assert!(!is_daytime(set, rise, set));
+    // Sunset after midnight.
+    assert!(is_daytime(23 * 60, 4 * 60, 30));
+    assert!(!is_daytime(2 * 60, 4 * 60, 30));
+}

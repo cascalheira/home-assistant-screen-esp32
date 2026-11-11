@@ -454,10 +454,23 @@ def info_payload(hass: HomeAssistant, settings: dict[str, Any]) -> dict[str, str
         if value is not None:
             indoor = f"{value:.1f} {hass.config.units.temperature_unit}"
     sun = hass.states.get(SUN_ENTITY)
+    sunrise = sunset = ""
+    if sun is not None:
+        # Local time of day of the next rising and setting: today's, or
+        # tomorrow's once passed, which is within a minute or two of it.
+        for key, attr in (("sunrise", "next_rising"), ("sunset", "next_setting")):
+            if (when := dt_util.parse_datetime(str(sun.attributes.get(attr) or ""))) is not None:
+                value = dt_util.as_local(when).strftime("%H:%M")
+                if key == "sunrise":
+                    sunrise = value
+                else:
+                    sunset = value
     return {
         "weather_condition": condition,
         "weather_temperature": temperature,
         "indoor_temperature": indoor,
         # For the screens' automatic light/dark theme.
         "sun": sun.state if sun is not None and sun.state in ("above_horizon", "below_horizon") else "",
+        "sunrise": sunrise,
+        "sunset": sunset,
     }

@@ -517,7 +517,7 @@ After `layout` and `states`, the subscription sends `settings`, then `info`:
 ```jsonc
 {"kind":"settings","settings":{"language":"en","clock_24h":true}}
 {"kind":"info","weather_condition":"sunny","weather_temperature":"22 °C",
- "indoor_temperature":"22.3 °C","sun":"above_horizon"}
+ "indoor_temperature":"22.3 °C","sun":"above_horizon","sunrise":"07:42","sunset":"17:31"}
 ```
 
 - **Order.** Every `layout` is followed by `states`, `settings` and `info`.
@@ -532,6 +532,9 @@ After `layout` and `states`, the subscription sends `settings`, then `info`:
 - **`sun`.** The state of `sun.sun`, `above_horizon` or `below_horizon`, for
   the screen's automatic light/dark theme; `""` without that entity. HA always
   tracks it (integration 0.6.0 and later).
+- **`sunrise`, `sunset`.** Local times (`HH:MM`, HA's time zone) of `sun.sun`'s
+  next rising and setting; `""` without it. The screen keeps them, so its theme
+  switches on time even while HA is offline.
 - **`indoor_temperature`.** The sensor's value in HA's temperature unit with one
   decimal, converted from °F/K if needed.
 - **Empty values.** Each field is `""` when its entity is not configured,

@@ -128,3 +128,25 @@ const MONTHS_PT: [&str; 12] = [
     "novembro",
     "dezembro",
 ];
+
+/// Minutes since midnight of "HH:MM".
+pub fn parse_hhmm(text: &str) -> Option<i32> {
+    let (h, m) = text.split_once(':')?;
+    let (h, m): (i32, i32) = (h.parse().ok()?, m.parse().ok()?);
+    ((0..24).contains(&h) && (0..60).contains(&m)).then_some(h * 60 + m)
+}
+
+/// "07:42" for minutes since midnight.
+pub fn hhmm(minutes: i32) -> String {
+    format!("{:02}:{:02}", minutes / 60, minutes % 60)
+}
+
+/// Whether `now` (minutes since midnight) is between sunrise and sunset.
+pub fn is_daytime(now: i32, sunrise: i32, sunset: i32) -> bool {
+    if sunrise <= sunset {
+        (sunrise..sunset).contains(&now)
+    } else {
+        // Sunset after midnight (far north in summer).
+        now >= sunrise || now < sunset
+    }
+}

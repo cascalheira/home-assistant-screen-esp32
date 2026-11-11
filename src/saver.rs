@@ -32,6 +32,8 @@ const NVS_CLOCK_24H: &str = "clock24";
 const NVS_WEATHER: &str = "saver_wx";
 const NVS_ROTATE: &str = "saver_rot";
 const NVS_THEME: &str = "theme";
+const NVS_SUNRISE: &str = "sunrise";
+const NVS_SUNSET: &str = "sunset";
 
 /// The delays offered on the settings page.
 const DELAY_OPTIONS: [u32; 3] = [60, 5 * 60, 15 * 60];
@@ -61,7 +63,8 @@ impl ThemeMode {
     }
 }
 
-/// Without Home Assistant's sun: light from LIGHT_FROM to LIGHT_UNTIL.
+/// Before Home Assistant ever sent sunrise and sunset: light from
+/// LIGHT_FROM to LIGHT_UNTIL.
 const LIGHT_FROM: i32 = 7;
 const LIGHT_UNTIL: i32 = 19;
 
@@ -127,8 +130,13 @@ pub enum ScreenCommand {
     /// Backlight while the brightness slider moves (not saved).
     PreviewBrightness(u8),
     Theme(ThemeMode),
-    /// Whether the sun is up, from Home Assistant's `sun.sun` (None: unknown).
-    Sun(Option<bool>),
+    /// From Home Assistant's `sun.sun`: whether the sun is up, and sunrise
+    /// and sunset in minutes since midnight (None: unknown).
+    Sun {
+        up: Option<bool>,
+        rise: Option<i32>,
+        set: Option<i32>,
+    },
     Wake,
     /// Wake for a notification: like `Wake`, and a backlight turned off
     /// from Home Assistant comes back on.
@@ -155,6 +163,9 @@ pub struct Saver {
     forecast_ready: bool,
     theme: ThemeMode,
     sun_up: Option<bool>,
+    /// Last sunrise and sunset from Home Assistant (minutes since midnight),
+    /// kept in NVS so the theme switches on time while HA is offline.
+    sun_times: Option<(i32, i32)>,
     /// The theme on screen (None until first applied).
     dark_shown: Option<bool>,
     /// What auto would show, as last told to the settings page.
@@ -201,6 +212,11 @@ impl Saver {
         let h24 = u8_or(NVS_CLOCK_24H, 1) == 1;
         let weather = u8_or(NVS_WEATHER, 0) == 1;
         let theme = ThemeMode::from_u8(u8_or(NVS_THEME, ThemeMode::Dark as u8));
+        let u16_of = |key| nvs.as_ref().and_then(|n| n.get_u16(key).ok().flatten());
+        let sun_times = u16_of(NVS_SUNRISE)
+            .zip(u16_of(NVS_SUNSET))
+            .map(|(r, s)| (r as i32, s as i32))
+            .filter(|&(r, s)| r < 1440 && s < 1440);
         let rotate_secs = nvs
             .as_ref()
             .and_then(|n| n.get_u32(NVS_ROTATE).ok().flatten())
@@ -220,6 +236,7 @@ impl Saver {
             forecast_ready: false,
             theme,
             sun_up: None,
+            sun_times,
             dark_shown: None,
             theme_detail_shown: String::new(),
             theme_checked: Instant::now(),
@@ -316,14 +333,24 @@ impl Saver {
     /// Whether the dark theme should show now, and what auto does, for the
     /// settings page.
     fn dark_now(&self) -> (bool, String) {
-        let (sun_up, source) = match self.sun_up {
-            Some(up) => (
-                Some(up),
-                "Light from sunrise to sunset (Home Assistant's sun)",
+        let now = local_time().map(|t| t.tm_hour * 60 + t.tm_min);
+        let (sun_up, source) = match (self.sun_times, self.sun_up) {
+            (Some((rise, set)), _) => (
+                now.map(|now| clock::is_daytime(now, rise, set)),
+                format!(
+                    "Light from sunrise ({}) to sunset ({}), from Home Assistant",
+                    clock::hhmm(rise),
+                    clock::hhmm(set)
+                ),
             ),
-            None => (
-                local_time().map(|t| (LIGHT_FROM..LIGHT_UNTIL).contains(&t.tm_hour)),
-                "Light from 7:00 to 19:00 (Home Assistant has no sun entity)",
+            (None, Some(up)) => (
+                Some(up),
+                "Light while Home Assistant's sun is up".to_string(),
+            ),
+            (None, None) => (
+                now.map(|now| clock::is_daytime(now, LIGHT_FROM * 60, LIGHT_UNTIL * 60)),
+                "Light from 07:00 to 19:00 until Home Assistant sends sunrise and sunset"
+                    .to_string(),
             ),
         };
         let dark = match self.theme {
@@ -467,8 +494,21 @@ impl Saver {
                 self.show_settings(ui);
                 self.apply_theme(ui);
             }
-            ScreenCommand::Sun(up) => {
+            ScreenCommand::Sun { up, rise, set } => {
                 self.sun_up = up;
+                if let Some(times) = rise.zip(set) {
+                    if self.sun_times != Some(times) {
+                        self.sun_times = Some(times);
+                        if let Some(nvs) = &mut self.nvs {
+                            let saved = nvs
+                                .set_u16(NVS_SUNRISE, times.0 as u16)
+                                .and_then(|()| nvs.set_u16(NVS_SUNSET, times.1 as u16));
+                            if let Err(e) = saved {
+                                log::warn!("saving sunrise/sunset failed: {e}");
+                            }
+                        }
+                    }
+                }
                 self.apply_theme(ui);
             }
             ScreenCommand::Wake => {

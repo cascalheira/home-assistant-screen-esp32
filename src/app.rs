@@ -290,10 +290,19 @@ impl App {
                     self.shared.st.borrow_mut().portuguese = portuguese;
                     self.shared.show_forecast();
                 }
-                ha::Event::Info { sun, .. } => {
+                ha::Event::Info {
+                    sun,
+                    sunrise,
+                    sunset,
+                    ..
+                } => {
                     self.screen_commands
                         .borrow_mut()
-                        .push(crate::saver::ScreenCommand::Sun(sun));
+                        .push(crate::saver::ScreenCommand::Sun {
+                            up: sun,
+                            rise: sunrise,
+                            set: sunset,
+                        });
                     self.shared.on_ha_event(event);
                 }
                 ha::Event::Forecast(forecast) => {
