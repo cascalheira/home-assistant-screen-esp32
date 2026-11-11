@@ -295,6 +295,9 @@ export component TileView inherits Rectangle {
 
     // The light's own colour while it is on, else the kind's.
     property <color> tint: root.tile.has-color ? root.tile.color : Icons.tint(root.tile.kind, root.tile.mode);
+    // Text and icons in the tile's colour: darker on the light theme, where
+    // the bright colours would hardly show on the pale tile.
+    property <color> ink: Theme.dark ? root.tint : root.tint.darker(0.5);
     property <bool> controls: root.tile.ctl-brightness || root.tile.ctl-hue || root.tile.ctl-kelvin;
     // Three sliders only fit on tall tiles; colour temperature gives way.
     property <bool> show-kelvin: root.tile.ctl-kelvin && (root.height >= 150px || !(root.tile.ctl-brightness && root.tile.ctl-hue));
@@ -303,7 +306,7 @@ export component TileView inherits Rectangle {
     property <bool> long-fired: false;
 
     border-radius: 18px;
-    background: !root.tile.available ? #15181e
+    background: !root.tile.available ? Theme.unavailable
         : ta.pressed ? (root.tile.on ? root.tint.with-alpha(0.34) : Theme.surface-3)
         : root.tile.on ? root.tint.with-alpha(0.22) : Theme.surface;
     border-width: root.tile.on && root.tile.available ? 2px : 0px;
@@ -317,7 +320,7 @@ export component TileView inherits Rectangle {
                 text: root.glyph;
                 font-family: Icons.family;
                 font-size: 40px;
-                color: !root.tile.available ? Theme.muted : root.tile.on ? root.tint : Theme.text;
+                color: !root.tile.available ? Theme.muted : root.tile.on ? root.ink : Theme.text;
                 vertical-alignment: top;
             }
             Rectangle { horizontal-stretch: 1; }
@@ -336,7 +339,7 @@ export component TileView inherits Rectangle {
             font-size: 40px;
             font-weight: 600;
             overflow: elide;
-            color: root.tile.on && root.tile.available ? root.tint : Theme.text;
+            color: root.tile.on && root.tile.available ? root.ink : Theme.text;
         }
         Text {
             text: root.tile.label;
@@ -348,7 +351,7 @@ export component TileView inherits Rectangle {
         Text {
             text: root.tile.detail == "" ? root.tile.status : root.tile.status + " · " + root.tile.detail;
             font-size: 14px;
-            color: root.tile.on && root.tile.available ? root.tint : Theme.muted;
+            color: root.tile.on && root.tile.available ? root.ink : Theme.muted;
             overflow: elide;
         }
     }
@@ -364,7 +367,7 @@ export component TileView inherits Rectangle {
                 text: root.glyph;
                 font-family: Icons.family;
                 font-size: 30px;
-                color: !root.tile.available ? Theme.muted : root.tile.on ? root.tint : Theme.text;
+                color: !root.tile.available ? Theme.muted : root.tile.on ? root.ink : Theme.text;
                 vertical-alignment: center;
             }
             VerticalLayout {
@@ -379,7 +382,7 @@ export component TileView inherits Rectangle {
                 Text {
                     text: root.tile.detail == "" ? root.tile.status : root.tile.status + " · " + root.tile.detail;
                     font-size: 13px;
-                    color: root.tile.on && root.tile.available ? root.tint : Theme.muted;
+                    color: root.tile.on && root.tile.available ? root.ink : Theme.muted;
                     overflow: elide;
                 }
             }
@@ -638,7 +641,7 @@ export component DimmerSheet inherits Sheet {
                     : !root.is-on ? "Off" : root.value >= 0 ? root.value + "%" : "On";
                 font-size: 44px;
                 font-weight: 600;
-                color: root.is-on || root.live-active ? root.tint : Theme.muted;
+                color: root.is-on || root.live-active ? (Theme.dark ? root.tint : root.tint.darker(0.5)) : Theme.muted;
                 vertical-alignment: center;
             }
             Rectangle { horizontal-stretch: 1; }

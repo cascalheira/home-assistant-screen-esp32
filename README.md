@@ -44,7 +44,13 @@ Assistant.
 5. **Notifications.** Home Assistant can show a message on the screen, with
    a camera snapshot or another picture. The screen wakes up for it. A tap
    closes it, and so do its timeout and Home Assistant.
-6. **Doorbell.** When the doorbell rings, the screen wakes and shows its
+6. **Settings and display.** Settings are split into Wi-Fi, Home Assistant,
+   Display, Screensaver and About. Display has a brightness slider (its
+   lowest setting still lights the screen; the scale follows how the eye
+   sees brightness) and the theme: light, dark, or auto, which is light from
+   sunrise to sunset by Home Assistant's `sun.sun` (07:00-19:00 without it).
+   The screensaver and the doorbell stay dark.
+7. **Doorbell.** When the doorbell rings, the screen wakes and shows its
    camera live (about 3-4 frames a second), with an optional button to open
    the gate or door. Home Assistant turns the camera's RTSP stream into small
    JPEGs with ffmpeg.

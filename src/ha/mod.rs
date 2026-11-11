@@ -125,6 +125,8 @@ pub enum Event {
         condition: String,
         weather: String,
         indoor: String,
+        /// `sun.sun`: whether the sun is up (None: no sun entity).
+        sun: Option<bool>,
     },
     /// Daily forecast for the screensaver (section 7).
     Forecast(model::Forecast),
@@ -1134,6 +1136,11 @@ impl Worker {
                     condition: text("weather_condition"),
                     weather: text("weather_temperature"),
                     indoor: text("indoor_temperature"),
+                    sun: match event["sun"].as_str() {
+                        Some("above_horizon") => Some(true),
+                        Some("below_horizon") => Some(false),
+                        _ => None,
+                    },
                 });
             }
             other => log::debug!("ignoring screen event {other:?}"),

@@ -58,7 +58,7 @@ from .doorbell import Doorbells
 from .forecast import async_forecast
 from .notifications import NotificationImages
 from .layout import empty_layout, iter_tiles, upgrade_layout
-from .view_model import info_payload, resolve_label, tile_view_model
+from .view_model import SUN_ENTITY, info_payload, resolve_label, tile_view_model
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -238,7 +238,7 @@ class ScreenSubscription:
         self._push_info()
         entities = [
             e
-            for e in (settings["weather_entity"], settings["indoor_temperature_entity"])
+            for e in (settings["weather_entity"], settings["indoor_temperature_entity"], SUN_ENTITY)
             if e
         ]
         if entities:

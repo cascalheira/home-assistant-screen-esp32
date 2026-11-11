@@ -220,10 +220,10 @@ impl Backlight {
         }
     }
 
-    /// Brightness in percent, 0-100.
+    /// Brightness 0-100 as people pick it (see `logic::backlight`).
     pub fn set(&mut self, percent: u8) {
         let max = self.channel.get_max_duty();
-        let duty = max * percent.min(100) as u32 / 100;
+        let duty = max * crate::logic::backlight::duty_permille(percent) / 1000;
         if let Err(e) = self.channel.set_duty(duty) {
             log::warn!("backlight: {e}");
         }

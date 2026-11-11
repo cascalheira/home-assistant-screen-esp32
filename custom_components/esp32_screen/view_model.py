@@ -435,6 +435,9 @@ def _climate(
     return vm
 
 
+SUN_ENTITY = "sun.sun"
+
+
 def info_payload(hass: HomeAssistant, settings: dict[str, Any]) -> dict[str, str]:
     """The `info` event fields for the clock (docs/protocol.md, section 7)."""
     condition = temperature = indoor = ""
@@ -450,8 +453,11 @@ def info_payload(hass: HomeAssistant, settings: dict[str, Any]) -> dict[str, str
         value = _sensor_temperature(hass, sensor)
         if value is not None:
             indoor = f"{value:.1f} {hass.config.units.temperature_unit}"
+    sun = hass.states.get(SUN_ENTITY)
     return {
         "weather_condition": condition,
         "weather_temperature": temperature,
         "indoor_temperature": indoor,
+        # For the screens' automatic light/dark theme.
+        "sun": sun.state if sun is not None and sun.state in ("above_horizon", "below_horizon") else "",
     }

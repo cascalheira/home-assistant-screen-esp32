@@ -176,6 +176,8 @@ struct Shared {
     modes: Rc<VecModel<ModeItem>>,
     sheet_buttons: Rc<VecModel<ActionButton>>,
     st: RefCell<State>,
+    /// Shared with `App::screen_commands`.
+    screen_commands: Rc<RefCell<Vec<crate::saver::ScreenCommand>>>,
 }
 
 impl App {
@@ -195,6 +197,7 @@ impl App {
             tiles: Rc::new(VecModel::default()),
             modes: Rc::new(VecModel::default()),
             sheet_buttons: Rc::new(VecModel::default()),
+            screen_commands: Rc::default(),
             st: RefCell::new(State {
                 entry_mode: Entry::WifiPassword,
                 entry: String::new(),
@@ -263,8 +266,8 @@ impl App {
         }
 
         Self {
+            screen_commands: shared.screen_commands.clone(),
             shared,
-            screen_commands: Rc::default(),
             resubscribed: Rc::default(),
             wifi_events: wifi.events,
             ha_events: ha.events,
@@ -286,6 +289,12 @@ impl App {
                         .push(crate::saver::ScreenCommand::ClockFormat { portuguese, h24 });
                     self.shared.st.borrow_mut().portuguese = portuguese;
                     self.shared.show_forecast();
+                }
+                ha::Event::Info { sun, .. } => {
+                    self.screen_commands
+                        .borrow_mut()
+                        .push(crate::saver::ScreenCommand::Sun(sun));
+                    self.shared.on_ha_event(event);
                 }
                 ha::Event::Forecast(forecast) => {
                     self.screen_commands.borrow_mut().push(
@@ -406,6 +415,11 @@ impl Shared {
         }
     }
 
+    /// Queues a display command for the main loop.
+    fn screen_command(&self, command: crate::saver::ScreenCommand) {
+        self.screen_commands.borrow_mut().push(command);
+    }
+
     fn register_callbacks(self: &Rc<Self>, ui: &AppWindow) {
         macro_rules! on {
             ($method:ident, |$s:ident $(, $arg:ident)*| $body:expr) => {{
@@ -418,6 +432,23 @@ impl Shared {
         on!(on_start_setup, |s| s.show_networks());
         on!(on_notify_closed, |s| s.close_notification());
         on!(on_doorbell_closed, |s| s.close_doorbell());
+        on!(on_display_brightness_changed, |s, v| s.screen_command(
+            crate::saver::ScreenCommand::PreviewBrightness(v.clamp(1, 100) as u8)
+        ));
+        on!(on_display_brightness_committed, |s, v| s.screen_command(
+            crate::saver::ScreenCommand::Brightness(v.clamp(1, 100) as u8)
+        ));
+        on!(on_display_theme_picked, |s, i| s.screen_command(
+            crate::saver::ScreenCommand::Theme(match i {
+                0 => crate::saver::ThemeMode::Auto,
+                1 => crate::saver::ThemeMode::Light,
+                _ => crate::saver::ThemeMode::Dark,
+            })
+        ));
+        on!(on_restart, |_s| {
+            log::warn!("restart from the settings page");
+            unsafe { esp_idf_svc::sys::esp_restart() };
+        });
         on!(on_doorbell_action_pressed, |s| {
             let ring = s.st.borrow().doorbell_ring.clone();
             if let Some(ring) = ring.filter(|r| !r.is_empty()) {
@@ -1144,6 +1175,7 @@ impl Shared {
                 condition,
                 weather,
                 indoor,
+                ..
             } => {
                 ui.set_clock_weather_condition(condition.into());
                 ui.set_clock_weather_temperature(weather.into());

@@ -136,9 +136,9 @@ fn main() -> anyhow::Result<()> {
         }
     };
     let sd_status = match sd_card.as_ref().and_then(|c| c.usage()) {
-        Some((total, free)) => format!("SD card: {} free of {}", sd::size(free), sd::size(total)),
-        None if sd_card.is_some() => "SD card mounted".to_string(),
-        None => "No SD card (insert one and restart to use it)".to_string(),
+        Some((total, free)) => format!("{} free of {}", sd::size(free), sd::size(total)),
+        None if sd_card.is_some() => "Mounted".to_string(),
+        None => "None (insert one and restart)".to_string(),
     };
 
     let window = MinimalSoftwareWindow::new(RepaintBufferType::SwappedBuffers);

@@ -517,7 +517,7 @@ After `layout` and `states`, the subscription sends `settings`, then `info`:
 ```jsonc
 {"kind":"settings","settings":{"language":"en","clock_24h":true}}
 {"kind":"info","weather_condition":"sunny","weather_temperature":"22 °C",
- "indoor_temperature":"22.3 °C"}
+ "indoor_temperature":"22.3 °C","sun":"above_horizon"}
 ```
 
 - **Order.** Every `layout` is followed by `states`, `settings` and `info`.
@@ -529,12 +529,15 @@ After `layout` and `states`, the subscription sends `settings`, then `info`:
   and so on).
 - **`weather_temperature`.** The weather entity's temperature rounded to a whole
   number, with its unit.
+- **`sun`.** The state of `sun.sun`, `above_horizon` or `below_horizon`, for
+  the screen's automatic light/dark theme; `""` without that entity. HA always
+  tracks it (integration 0.6.0 and later).
 - **`indoor_temperature`.** The sensor's value in HA's temperature unit with one
   decimal, converted from °F/K if needed.
 - **Empty values.** Each field is `""` when its entity is not configured,
   missing, unavailable or unknown.
 - **When `info` is sent.** HA tracks the configured entities and sends `info`
-  only when one of the three strings changes.
+  only when one of the strings changes.
 
 ### Forecast
 

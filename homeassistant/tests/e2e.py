@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from device_sim import VM_KEYS, CommandError, HAWebSocket, ScreenSim, login_flow, refresh_token
 
 SIM_ID = "AABBCCDDEEFF"
+SUN = ""  # sun.sun's state, read in settings_tests
 # The page icons the firmware can draw, as specified (docs/protocol.md).
 ALLOWED_ICONS = """
 mdi:home mdi:sofa mdi:bed mdi:silverware-fork-knife mdi:coffee mdi:shower mdi:bathtub mdi:toilet mdi:desk
@@ -160,11 +161,15 @@ async def control_tests(admin: HAWebSocket, sim: ScreenSim) -> None:
 
 async def settings_tests(admin: HAWebSocket, sim: ScreenSim) -> None:
     """Section 7: settings and info events, editor settings, entity tracking."""
+    sun_state = next((s_["state"] for s_ in await admin.call("get_states") if s_["entity_id"] == "sun.sun"), "")
+    global SUN
+    SUN = sun_state if sun_state in ("above_horizon", "below_horizon") else ""
+    check(sim.events[3].get("sun") == SUN, "info carries sun.sun for the auto theme", f"{sim.events[3].get('sun')!r} vs {sun_state!r}")
     after_subscribe = [e["kind"] for e in sim.events[:4]]
     check(after_subscribe == ["layout", "states", "settings", "info"], "subscribe sends layout, states, settings, info", str(after_subscribe))
     check({"kind": "forecast", "unit": "", "days": []} in sim.events, "no weather entity -> empty forecast event")
     check(sim.events[2] == {"kind": "settings", "settings": {"language": "en", "clock_24h": True}}
-          and sim.events[3] == {"kind": "info", "weather_condition": "", "weather_temperature": "", "indoor_temperature": ""},
+          and sim.events[3] == {"kind": "info", "weather_condition": "", "weather_temperature": "", "indoor_temperature": "", "sun": SUN},
           "defaults: en, 24 h clock, no info", f"{sim.events[2]} {sim.events[3]}")
 
     mark = sim.mark()
@@ -177,7 +182,7 @@ async def settings_tests(admin: HAWebSocket, sim: ScreenSim) -> None:
         settings = await sim.wait_for(lambda e: e.get("kind") == "settings", 5, since=mark)
         info = await sim.wait_for(lambda e: e.get("kind") == "info", 5, since=mark)
         check(settings["settings"] == {"language": "pt", "clock_24h": False}, "changing settings sends a settings event", str(settings))
-        check(info == {"kind": "info", "weather_condition": "sunny", "weather_temperature": "22 °C", "indoor_temperature": "23.4 °C"},
+        check(info == {"kind": "info", "weather_condition": "sunny", "weather_temperature": "22 °C", "indoor_temperature": "23.4 °C", "sun": SUN},
               "info event with weather and indoor temperature", str(info))
     except TimeoutError:
         check(False, "changing settings sends settings + info events", str(sim.events[mark:]))
@@ -241,7 +246,7 @@ async def settings_tests(admin: HAWebSocket, sim: ScreenSim) -> None:
                                                                                "language": "en", "clock_24h": True})
     try:
         info = await sim.wait_for(lambda e: e.get("kind") == "info", 5, since=mark)
-        check(info == {"kind": "info", "weather_condition": "", "weather_temperature": "", "indoor_temperature": ""},
+        check(info == {"kind": "info", "weather_condition": "", "weather_temperature": "", "indoor_temperature": "", "sun": SUN},
               "clearing the entities -> empty info", str(info))
         forecast = await sim.wait_for(lambda e: e.get("kind") == "forecast", 5, since=mark)
         check(forecast == {"kind": "forecast", "unit": "", "days": []}, "clearing the weather entity -> empty forecast", str(forecast))

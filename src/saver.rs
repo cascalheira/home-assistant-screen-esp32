@@ -31,6 +31,7 @@ const NVS_LANGUAGE: &str = "lang";
 const NVS_CLOCK_24H: &str = "clock24";
 const NVS_WEATHER: &str = "saver_wx";
 const NVS_ROTATE: &str = "saver_rot";
+const NVS_THEME: &str = "theme";
 
 /// The delays offered on the settings page.
 const DELAY_OPTIONS: [u32; 3] = [60, 5 * 60, 15 * 60];
@@ -39,7 +40,30 @@ const ROTATE_OPTIONS: [u32; 4] = [10, 20, 30, 60];
 const ROTATE_DEFAULT: u32 = 20;
 const FLIP_DURATION: Duration = Duration::from_millis(650);
 /// Backlight while the screensaver shows (never brighter than the setting).
-const BRIGHTNESS_SAVER: u8 = 35;
+const BRIGHTNESS_SAVER: u8 = 50;
+
+/// The colour theme setting.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ThemeMode {
+    /// Light while the sun is up.
+    Auto = 0,
+    Light = 1,
+    Dark = 2,
+}
+
+impl ThemeMode {
+    fn from_u8(v: u8) -> Self {
+        match v {
+            0 => Self::Auto,
+            1 => Self::Light,
+            _ => Self::Dark,
+        }
+    }
+}
+
+/// Without Home Assistant's sun: light from LIGHT_FROM to LIGHT_UNTIL.
+const LIGHT_FROM: i32 = 7;
+const LIGHT_UNTIL: i32 = 19;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
@@ -100,6 +124,11 @@ pub enum ScreenCommand {
     SaverRotate(u32),
     /// Home Assistant sent a forecast with at least one day (or none).
     ForecastReady(bool),
+    /// Backlight while the brightness slider moves (not saved).
+    PreviewBrightness(u8),
+    Theme(ThemeMode),
+    /// Whether the sun is up, from Home Assistant's `sun.sun` (None: unknown).
+    Sun(Option<bool>),
     Wake,
     /// Wake for a notification: like `Wake`, and a backlight turned off
     /// from Home Assistant comes back on.
@@ -124,6 +153,14 @@ pub struct Saver {
     weather: bool,
     rotate_secs: u32,
     forecast_ready: bool,
+    theme: ThemeMode,
+    sun_up: Option<bool>,
+    /// The theme on screen (None until first applied).
+    dark_shown: Option<bool>,
+    /// What auto would show, as last told to the settings page.
+    theme_detail_shown: String,
+    /// Last time `tick` re-checked the theme (auto changes with the clock).
+    theme_checked: Instant,
     /// The view on screen while active, and since when.
     view: Option<View>,
     view_since: Instant,
@@ -163,6 +200,7 @@ impl Saver {
         let portuguese = u8_or(NVS_LANGUAGE, 0) == 1;
         let h24 = u8_or(NVS_CLOCK_24H, 1) == 1;
         let weather = u8_or(NVS_WEATHER, 0) == 1;
+        let theme = ThemeMode::from_u8(u8_or(NVS_THEME, ThemeMode::Dark as u8));
         let rotate_secs = nvs
             .as_ref()
             .and_then(|n| n.get_u32(NVS_ROTATE).ok().flatten())
@@ -180,6 +218,11 @@ impl Saver {
             weather,
             rotate_secs,
             forecast_ready: false,
+            theme,
+            sun_up: None,
+            dark_shown: None,
+            theme_detail_shown: String::new(),
+            theme_checked: Instant::now(),
             view: None,
             view_since: Instant::now(),
             active: false,
@@ -193,6 +236,7 @@ impl Saver {
             flip_started: [None; 4],
         }));
         saver.borrow().show_settings(ui);
+        saver.borrow_mut().apply_theme(ui);
 
         let weak = ui.as_weak();
         let s = saver.clone();
@@ -238,6 +282,14 @@ impl Saver {
         let index = DELAY_OPTIONS.iter().position(|&d| d == self.delay_secs);
         ui.set_saver_delay(index.map(|i| i as i32).unwrap_or(-1));
         ui.set_saver_weather(self.weather);
+        let brightness = if self.brightness == 0 {
+            self.last_brightness
+        } else {
+            self.brightness
+        };
+        ui.set_display_brightness(brightness as i32);
+        ui.set_display_brightness_live(brightness as i32);
+        ui.set_display_theme(self.theme as i32);
         let index = ROTATE_OPTIONS.iter().position(|&s| s == self.rotate_secs);
         ui.set_saver_rotate(index.map(|i| i as i32).unwrap_or(-1));
     }
@@ -258,6 +310,46 @@ impl Saver {
             if let Err(e) = nvs.set_u32(NVS_ROTATE, secs) {
                 log::warn!("saving the screensaver rotation failed: {e}");
             }
+        }
+    }
+
+    /// Whether the dark theme should show now, and what auto does, for the
+    /// settings page.
+    fn dark_now(&self) -> (bool, String) {
+        let (sun_up, source) = match self.sun_up {
+            Some(up) => (
+                Some(up),
+                "Light from sunrise to sunset (Home Assistant's sun)",
+            ),
+            None => (
+                local_time().map(|t| (LIGHT_FROM..LIGHT_UNTIL).contains(&t.tm_hour)),
+                "Light from 7:00 to 19:00 (Home Assistant has no sun entity)",
+            ),
+        };
+        let dark = match self.theme {
+            ThemeMode::Light => false,
+            ThemeMode::Dark => true,
+            ThemeMode::Auto => !sun_up.unwrap_or(false),
+        };
+        let now = match sun_up {
+            Some(true) => "Now: light.",
+            Some(false) => "Now: dark.",
+            None => "Dark until the time is known.",
+        };
+        (dark, format!("{source}. {now}"))
+    }
+
+    /// Switches the theme when it should change.
+    fn apply_theme(&mut self, ui: &AppWindow) {
+        let (dark, detail) = self.dark_now();
+        if self.dark_shown != Some(dark) {
+            log::info!("{} theme", if dark { "dark" } else { "light" });
+            ui.global::<crate::Theme>().set_dark(dark);
+            self.dark_shown = Some(dark);
+        }
+        if detail != self.theme_detail_shown {
+            ui.set_display_theme_detail(detail.as_str().into());
+            self.theme_detail_shown = detail;
         }
     }
 
@@ -338,7 +430,9 @@ impl Saver {
     }
 
     pub fn command(&mut self, command: ScreenCommand, ui: &AppWindow, backlight: &mut Backlight) {
-        log::info!("display command: {command:?}");
+        if !matches!(command, ScreenCommand::PreviewBrightness(_)) {
+            log::info!("display command: {command:?}");
+        }
         match command {
             ScreenCommand::Brightness(value) => {
                 self.brightness = value.min(100);
@@ -347,6 +441,7 @@ impl Saver {
                 }
                 self.save_u8(NVS_BRIGHTNESS, self.brightness);
                 self.apply_backlight(backlight);
+                self.show_settings(ui);
             }
             ScreenCommand::SaverMode(mode) => {
                 self.set_mode(mode);
@@ -365,6 +460,17 @@ impl Saver {
                 self.show_settings(ui);
             }
             ScreenCommand::ForecastReady(ready) => self.forecast_ready = ready,
+            ScreenCommand::PreviewBrightness(value) => backlight.set(value.clamp(1, 100)),
+            ScreenCommand::Theme(theme) => {
+                self.theme = theme;
+                self.save_u8(NVS_THEME, theme as u8);
+                self.show_settings(ui);
+                self.apply_theme(ui);
+            }
+            ScreenCommand::Sun(up) => {
+                self.sun_up = up;
+                self.apply_theme(ui);
+            }
             ScreenCommand::Wake => {
                 self.last_input = Instant::now();
                 if self.active {
@@ -478,6 +584,10 @@ impl Saver {
 
     /// Call from the UI loop.
     pub fn tick(&mut self, ui: &AppWindow, backlight: &mut Backlight) {
+        if self.theme_checked.elapsed() >= Duration::from_secs(5) {
+            self.theme_checked = Instant::now();
+            self.apply_theme(ui);
+        }
         if !self.active {
             let idle = self.last_input.elapsed() >= Duration::from_secs(self.delay_secs as u64);
             if self.enabled() && idle && !self.swallowing && ui.get_page() == Page::Dashboard {

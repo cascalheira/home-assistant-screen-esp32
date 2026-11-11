@@ -28,7 +28,8 @@ export component Button inherits Rectangle {
             text: root.text;
             font-size: 18px;
             font-weight: 600;
-            color: root.enabled ? Theme.text : Theme.muted;
+            // White on the coloured buttons, in either theme.
+            color: !root.enabled ? Theme.muted : root.primary || root.destructive ? #ffffff : Theme.text;
             horizontal-alignment: center;
             vertical-alignment: center;
         }
@@ -51,7 +52,7 @@ export component SignalBars inherits Rectangle {
         width: 4px;
         height: 6px + i * 4px;
         border-radius: 1px;
-        background: i < root.bars ? root.on-color : #ffffff28;
+        background: i < root.bars ? root.on-color : Theme.text.with-alpha(0.16);
     }
 }
 
@@ -259,14 +260,14 @@ export component Key inherits Rectangle {
 
     horizontal-stretch: 1;
     border-radius: 8px;
-    background: !root.enabled ? #1c2029
+    background: !root.enabled ? Theme.key-disabled
         : root.active ? (ta.pressed ? Theme.accent-pressed : Theme.accent)
-        : ta.pressed ? #56607a
-        : root.special ? #2a303c : #3a4252;
+        : ta.pressed ? Theme.key-pressed
+        : root.special ? Theme.key-special : Theme.key;
     Text {
         text: root.label;
         font-size: 20px;
-        color: root.enabled ? Theme.text : Theme.muted;
+        color: !root.enabled ? Theme.muted : root.active ? #ffffff : Theme.text;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
@@ -300,7 +301,7 @@ export component Keyboard inherits Rectangle {
     }
 
     height: 292px;
-    background: #141821;
+    background: Theme.keyboard;
 
     VerticalLayout {
         padding: 8px;
@@ -480,7 +481,7 @@ export component Segmented inherits Rectangle {
             label := Text {
                 text: option;
                 font-size: 16px;
-                color: root.enabled ? Theme.text : Theme.muted;
+                color: !root.enabled ? Theme.muted : i == root.selected ? #ffffff : Theme.text;
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
@@ -490,4 +491,27 @@ export component Segmented inherits Rectangle {
             }
         }
     }
+}
+
+// Heading inside a settings section.
+export component SectionTitle inherits Text {
+    font-size: 20px;
+    font-weight: 600;
+    color: Theme.text;
+    vertical-alignment: center;
+    horizontal-stretch: 1;
+}
+
+// A label on the left, the control (child) on the right.
+export component SettingRow inherits HorizontalLayout {
+    in property <string> label;
+    spacing: 14px;
+    Text {
+        text: root.label;
+        font-size: 17px;
+        color: Theme.text;
+        vertical-alignment: center;
+        horizontal-stretch: 1;
+    }
+    @children
 }

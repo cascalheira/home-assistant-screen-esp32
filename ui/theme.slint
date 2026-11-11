@@ -1,16 +1,26 @@
-// Colours shared by every screen.
+// Colours shared by every screen, dark or light. Rust sets `dark` from the
+// theme setting (dark, light, or auto: light while the sun is up).
 
 export global Theme {
-    out property <color> bg: #0f1115;
-    out property <color> surface: #1a1e26;
-    out property <color> surface-2: #252a35;
-    out property <color> surface-3: #343b4b;
-    out property <color> line: #2a303c;
-    out property <color> text: #eef1f6;
-    out property <color> muted: #98a2b3;
-    out property <color> accent: #3b82f6;
-    out property <color> accent-pressed: #2563eb;
-    out property <color> success: #22c55e;
-    out property <color> danger: #ef4444;
-    out property <color> warning: #f59e0b;
+    in-out property <bool> dark: true;
+    out property <color> bg: root.dark ? #0f1115 : #eef0f4;
+    out property <color> surface: root.dark ? #1a1e26 : #ffffff;
+    out property <color> surface-2: root.dark ? #252a35 : #e4e8ef;
+    out property <color> surface-3: root.dark ? #343b4b : #cfd5df;
+    out property <color> line: root.dark ? #2a303c : #d9dee6;
+    out property <color> text: root.dark ? #eef1f6 : #151a23;
+    out property <color> muted: root.dark ? #98a2b3 : #5b6474;
+    out property <color> accent: root.dark ? #3b82f6 : #2563eb;
+    out property <color> accent-pressed: root.dark ? #2563eb : #1d4ed8;
+    out property <color> success: root.dark ? #22c55e : #16a34a;
+    out property <color> danger: root.dark ? #ef4444 : #dc2626;
+    out property <color> warning: root.dark ? #f59e0b : #d97706;
+    // A tile whose entity is unavailable.
+    out property <color> unavailable: root.dark ? #15181e : #e6e8ec;
+    // On-screen keyboard.
+    out property <color> keyboard: root.dark ? #141821 : #d5d9e0;
+    out property <color> key: root.dark ? #3a4252 : #ffffff;
+    out property <color> key-special: root.dark ? #2a303c : #b8bfcb;
+    out property <color> key-pressed: root.dark ? #56607a : #9aa3b2;
+    out property <color> key-disabled: root.dark ? #1c2029 : #c9ced7;
 }
