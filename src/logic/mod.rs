@@ -6,5 +6,6 @@ pub mod climate;
 pub mod clock;
 pub mod image;
 pub mod net;
+pub mod pin;
 pub mod screensaver;
 pub mod touch;

@@ -64,7 +64,7 @@ async def control_tests(admin: HAWebSocket, sim: ScreenSim) -> None:
     """Section 6: backlight, screensaver select/number/sensor, wake/show-clock buttons."""
     registry = await admin.call("config/entity_registry/list")
     keys = ("backlight", "screensaver", "screensaver_delay", "wake", "show_clock", "screensaver_active",
-            "screensaver_weather", "screensaver_rotate")
+            "screensaver_weather", "screensaver_rotate", "clear_pin")
     ids = {k: next((e["entity_id"] for e in registry if e.get("unique_id") == f"{SIM_ID}_{k}"), None) for k in keys}
     check(all(ids.values()), "screen control entities exist", str(ids))
     if not all(ids.values()):
@@ -123,6 +123,8 @@ async def control_tests(admin: HAWebSocket, sim: ScreenSim) -> None:
     check(cmd == {"kind": "command", "command": "screensaver_delay", "value": 600}, "number 10 min -> command screensaver_delay 600 s", str(cmd))
     cmd = await command_after(service("button", "press", "wake"))
     check(cmd == {"kind": "command", "command": "wake", "value": None}, "wake button -> command wake", str(cmd))
+    cmd = await command_after(service("button", "press", "clear_pin"))
+    check(cmd == {"kind": "command", "command": "clear_pin", "value": None}, "Clear PIN button -> command clear_pin", str(cmd))
     cmd = await command_after(service("button", "press", "show_clock"))
     check(cmd == {"kind": "command", "command": "sleep", "value": None}, "show clock button -> command sleep", str(cmd))
     await sim.report_state(brightness=80, screensaver_mode="flip", screensaver_delay=600, screensaver_active=True)

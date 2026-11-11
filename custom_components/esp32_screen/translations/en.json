@@ -22,6 +22,9 @@
       },
       "show_clock": {
         "name": "Show screensaver"
+      },
+      "clear_pin": {
+        "name": "Clear PIN"
       }
     },
     "light": {

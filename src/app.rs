@@ -133,6 +133,9 @@ struct State {
     doorbell_until: Option<Instant>,
     /// Last time the doorbell video kept the screen awake.
     doorbell_woke: Option<Instant>,
+    pin_flow: Option<PinFlow>,
+    /// Digits typed on the PIN pad.
+    pin_entry: String,
 }
 
 impl State {
@@ -178,6 +181,16 @@ struct Shared {
     st: RefCell<State>,
     /// Shared with `App::screen_commands`.
     screen_commands: Rc<RefCell<Vec<crate::saver::ScreenCommand>>>,
+    lock: RefCell<crate::lock::Lock>,
+}
+
+/// What the PIN pad is for.
+#[derive(Clone, Debug, PartialEq)]
+enum PinFlow {
+    UnlockSettings,
+    UnlockScreens,
+    NewFirst,
+    NewConfirm(String),
 }
 
 impl App {
@@ -186,8 +199,10 @@ impl App {
         wifi: WifiHandle,
         ha: HaHandle,
         updates: Receiver<crate::ota::Status>,
+        lock: crate::lock::Lock,
     ) -> Self {
         let shared = Rc::new(Shared {
+            lock: RefCell::new(lock),
             ui: ui.as_weak(),
             wifi: wifi.control,
             ha: ha.control(),
@@ -236,6 +251,8 @@ impl App {
                 doorbell_ring: None,
                 doorbell_until: None,
                 doorbell_woke: None,
+                pin_flow: None,
+                pin_entry: String::new(),
             }),
         });
 
@@ -282,6 +299,9 @@ impl App {
         }
         while let Ok(event) = self.ha_events.try_recv() {
             match event {
+                ha::Event::Command(crate::saver::ScreenCommand::ClearPin) => {
+                    self.shared.clear_pin()
+                }
                 ha::Event::Command(command) => self.screen_commands.borrow_mut().push(command),
                 ha::Event::Settings { portuguese, h24 } => {
                     self.screen_commands
@@ -360,6 +380,18 @@ impl App {
 
     pub fn forget_wifi(&self) {
         self.shared.forget_wifi();
+    }
+
+    pub fn clear_pin(&self) {
+        self.shared.clear_pin();
+    }
+
+    /// The screensaver started or nobody touched the screen for a while:
+    /// the PIN is needed again.
+    pub fn relock(&self) {
+        if self.shared.lock.borrow_mut().lock() {
+            log::info!("locked");
+        }
     }
 
     /// Display commands received since the last call.
@@ -569,9 +601,23 @@ impl Shared {
         on!(on_ha_sign_out, |s| s.ha.send(ha::Command::Logout));
 
         // ---- Dashboard
-        on!(on_open_settings, |s| {
+        on!(on_open_settings, |s| s.open_settings());
+        on!(on_security_set_pin, |s| s.start_pin(PinFlow::NewFirst));
+        on!(on_security_remove_pin, |s| s.clear_pin());
+        on!(on_security_lock_screens_picked, |s, i| {
+            s.lock.borrow_mut().set_lock_screens(i == 1);
             s.refresh_settings();
-            s.set_page(Page::Settings);
+        });
+        on!(on_pin_key, |s, digit| s.pin_key(&digit));
+        on!(on_pin_backspace, |s| {
+            s.st.borrow_mut().pin_entry.pop();
+            s.show_pin_entry(None);
+        });
+        on!(on_pin_ok, |s| s.pin_ok());
+        on!(on_pin_cancel, |s| {
+            if s.st.borrow().pin_flow != Some(PinFlow::UnlockScreens) {
+                s.close_pin();
+            }
         });
         on!(on_page_selected, |s, index| {
             s.st.borrow_mut().page_index = index.max(0) as usize;
@@ -1319,6 +1365,11 @@ impl Shared {
 
     fn refresh_settings(&self) {
         let Some(ui) = self.ui() else { return };
+        {
+            let lock = self.lock.borrow();
+            ui.set_security_has_pin(lock.has_pin());
+            ui.set_security_lock_screens(lock.lock_screens());
+        }
         let st = self.st.borrow();
         ui.set_ha_configured(st.ha_url.is_some());
         ui.set_ha_url(st.ha_url.clone().unwrap_or_default().into());
@@ -1753,6 +1804,151 @@ impl Shared {
         self.refresh_popups();
     }
 
+    // ------------------------------------------------------------ PIN ----
+
+    fn open_settings(&self) {
+        if self.lock.borrow().settings_locked() {
+            self.start_pin(PinFlow::UnlockSettings);
+        } else {
+            self.refresh_settings();
+            self.set_page(Page::Settings);
+        }
+    }
+
+    fn clear_pin(&self) {
+        self.lock.borrow_mut().clear_pin();
+        if self.st.borrow().pin_flow.is_some() {
+            self.close_pin();
+        }
+        self.refresh_settings();
+    }
+
+    fn start_pin(&self, flow: PinFlow) {
+        let Some(ui) = self.ui() else { return };
+        let (title, message) = match &flow {
+            PinFlow::UnlockSettings => ("Enter the PIN to open the settings", ""),
+            PinFlow::UnlockScreens => ("Enter the PIN", ""),
+            PinFlow::NewFirst => ("Choose a PIN", "4 to 8 digits."),
+            PinFlow::NewConfirm(_) => ("Enter the new PIN again", ""),
+        };
+        ui.set_pin_title(title.into());
+        ui.set_pin_message(message.into());
+        ui.set_pin_error(false);
+        ui.set_pin_cancellable(flow != PinFlow::UnlockScreens);
+        {
+            let mut st = self.st.borrow_mut();
+            st.pin_flow = Some(flow);
+            st.pin_entry.clear();
+        }
+        ui.set_pin_length(0);
+        ui.set_pin_open(true);
+    }
+
+    fn close_pin(&self) {
+        {
+            let mut st = self.st.borrow_mut();
+            st.pin_flow = None;
+            st.pin_entry.clear();
+        }
+        if let Some(ui) = self.ui() {
+            ui.set_pin_open(false);
+            ui.set_pin_length(0);
+        }
+    }
+
+    /// Updates the dots; `error` replaces the message (in red).
+    fn show_pin_entry(&self, error: Option<String>) {
+        let Some(ui) = self.ui() else { return };
+        ui.set_pin_length(self.st.borrow().pin_entry.len() as i32);
+        if let Some(error) = error {
+            ui.set_pin_message(error.into());
+            ui.set_pin_error(true);
+        } else if ui.get_pin_error() {
+            ui.set_pin_error(false);
+            ui.set_pin_message("".into());
+        }
+    }
+
+    fn pin_key(&self, digit: &str) {
+        {
+            let mut st = self.st.borrow_mut();
+            if st.pin_entry.len() >= crate::logic::pin::MAX_LEN {
+                return;
+            }
+            st.pin_entry.push_str(digit);
+        }
+        self.show_pin_entry(None);
+    }
+
+    fn pin_ok(&self) {
+        let (flow, entry) = {
+            let st = self.st.borrow();
+            (st.pin_flow.clone(), st.pin_entry.clone())
+        };
+        let Some(flow) = flow else { return };
+        self.st.borrow_mut().pin_entry.clear();
+        match flow {
+            PinFlow::UnlockSettings | PinFlow::UnlockScreens => {
+                let result = self.lock.borrow_mut().check(&entry);
+                match result {
+                    Ok(()) => {
+                        self.close_pin();
+                        if flow == PinFlow::UnlockSettings {
+                            self.refresh_settings();
+                            self.set_page(Page::Settings);
+                        }
+                    }
+                    Err(crate::lock::Refused::Wrong(left)) => self.show_pin_entry(Some(format!(
+                        "Wrong PIN. {left} {} left before a wait.",
+                        if left == 1 { "try" } else { "tries" }
+                    ))),
+                    Err(crate::lock::Refused::Wait(secs)) => self.show_pin_entry(Some(format!(
+                        "Too many wrong PINs. Try again in {secs} s."
+                    ))),
+                }
+            }
+            PinFlow::NewFirst => {
+                if crate::logic::pin::valid(&entry) {
+                    self.start_pin(PinFlow::NewConfirm(entry));
+                } else {
+                    self.show_pin_entry(Some("Use 4 to 8 digits.".into()));
+                }
+            }
+            PinFlow::NewConfirm(first) => {
+                if entry == first {
+                    self.lock.borrow_mut().set_pin(&entry);
+                    self.close_pin();
+                    self.refresh_settings();
+                } else {
+                    self.start_pin(PinFlow::NewFirst);
+                    self.show_pin_entry(Some("The two PINs were different. Choose a PIN.".into()));
+                }
+            }
+        }
+    }
+
+    /// Shows the PIN pad over a locked dashboard, and leaves the settings
+    /// once they lock again.
+    fn enforce_lock(&self) {
+        let Some(ui) = self.ui() else { return };
+        let page = ui.get_page();
+        let (settings_locked, screens_locked) = {
+            let lock = self.lock.borrow();
+            (lock.settings_locked(), lock.screens_locked())
+        };
+        let flow = self.st.borrow().pin_flow.clone();
+        if page == Page::Settings && settings_locked && flow.is_none() {
+            self.set_page(Page::Dashboard);
+        }
+        if ui.get_page() == Page::Dashboard && screens_locked {
+            if flow != Some(PinFlow::UnlockScreens) {
+                self.start_pin(PinFlow::UnlockScreens);
+            }
+        } else if flow == Some(PinFlow::UnlockScreens) {
+            self.close_pin();
+        }
+    }
+
     fn close_doorbell(&self) {
         let was_open = {
             let mut st = self.st.borrow_mut();
@@ -1786,6 +1982,7 @@ impl Shared {
     /// Debounced work: sends a pending temperature, drops stale holds,
     /// closes a notification whose time is up.
     fn tick(&self) {
+        self.enforce_lock();
         let now = Instant::now();
         let expired = self
             .st

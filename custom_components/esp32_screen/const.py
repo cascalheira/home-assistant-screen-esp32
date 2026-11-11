@@ -136,7 +136,7 @@ SCREENSAVER_MODES: Final = ("off", "clock", "flip")
 SCREENSAVER_ROTATE: Final = (10, 20, 30, 60)
 COMMANDS: Final = (
     "brightness", "screensaver_mode", "screensaver_delay", "screensaver_weather",
-    "screensaver_rotate", "wake", "sleep",
+    "screensaver_rotate", "wake", "sleep", "clear_pin",
 )
 # Weather forecast for the screensaver (docs/protocol.md, section 7).
 FORECAST_DAYS: Final = 7

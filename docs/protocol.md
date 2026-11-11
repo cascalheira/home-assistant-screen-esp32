@@ -449,6 +449,7 @@ The backlight and screensaver are HA entities on the screen's device:
 | `number.<screen>_screensaver_delay` | idle minutes before the screensaver, 1-60 |
 | `button.<screen>_wake` | wake the screen (leave the screensaver) |
 | `button.<screen>_show_clock` | start the screensaver now |
+| `button.<screen>_clear_pin` | remove the screen's PIN (firmware 0.11.0+; for a forgotten PIN) |
 | `binary_sensor.<screen>_screensaver` | on while the screensaver is showing |
 
 These entities show what the screen last reported. They are unavailable until
@@ -468,6 +469,7 @@ Sent on the screen's `esp32_screen/subscribe` subscription:
 {"kind":"command","command":"screensaver_rotate","value":20}    // 10 | 20 | 30 | 60 seconds
 {"kind":"command","command":"wake","value":null}
 {"kind":"command","command":"sleep","value":null}              // show the screensaver now
+{"kind":"command","command":"clear_pin","value":null}          // remove the PIN
 ```
 
 `value` is always present (`null` for `wake`/`sleep`). Turning the backlight on

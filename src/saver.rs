@@ -133,6 +133,8 @@ pub enum ScreenCommand {
     Theme(ThemeMode),
     /// From Home Assistant's `sun.sun`: whether the sun is up, and sunrise
     /// and sunset in minutes since midnight (None: unknown).
+    /// Home Assistant's "Clear PIN" button (handled by the app).
+    ClearPin,
     Sun {
         up: Option<bool>,
         rise: Option<i32>,
@@ -511,6 +513,7 @@ impl Saver {
                 self.show_settings(ui);
             }
             ScreenCommand::ForecastReady(ready) => self.forecast_ready = ready,
+            ScreenCommand::ClearPin => {}
             ScreenCommand::PreviewBrightness(value) => backlight.set(value.clamp(1, 100)),
             ScreenCommand::Theme(theme) => {
                 self.theme = theme;
@@ -685,6 +688,16 @@ impl Saver {
 
     pub fn is_active(&self) -> bool {
         self.active
+    }
+
+    /// Time since the last touch.
+    pub fn idle(&self) -> Duration {
+        self.last_input.elapsed()
+    }
+
+    /// The screensaver delay (also when the screensaver is off).
+    pub fn delay(&self) -> Duration {
+        Duration::from_secs(self.delay_secs as u64)
     }
 
     /// Debug aid: flips the last digit to the next value.

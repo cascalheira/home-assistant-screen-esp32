@@ -12,6 +12,7 @@ mod console;
 mod display;
 mod ha;
 mod icons;
+mod lock;
 mod logic;
 mod ota;
 mod saver;
@@ -154,7 +155,7 @@ fn main() -> anyhow::Result<()> {
     let screen_id = wifi.mac.replace(':', "");
     let (update_tx, update_rx) = mpsc::channel();
     let ha = ha::start(nvs.clone(), screen_id, update_tx.clone(), sd_card.is_some())?;
-    let app = app::App::new(&ui, wifi, ha, update_rx);
+    let app = app::App::new(&ui, wifi, ha, update_rx, lock::Lock::new(nvs.clone()));
     if sd_card.is_some() {
         ota::update_from_sd(update_tx);
     }
@@ -367,6 +368,7 @@ fn main() -> anyhow::Result<()> {
                     FACTORY_RESET_HOLD.as_secs()
                 );
                 app.forget_wifi();
+                app.clear_pin();
                 boot_pressed_since = Some(Instant::now() + Duration::from_secs(3600));
             }
         } else {
@@ -390,6 +392,13 @@ fn main() -> anyhow::Result<()> {
             }
         }
         saver.borrow_mut().tick(&ui, &mut backlight);
+        {
+            // The PIN is needed again after the screensaver or an idle spell.
+            let s = saver.borrow();
+            if s.is_active() || s.idle() >= s.delay() {
+                app.relock();
+            }
+        }
         if !marked_healthy && started.elapsed() >= ota::HEALTHY_AFTER {
             // New firmware that got this far stays installed (no rollback).
             ota::mark_healthy();

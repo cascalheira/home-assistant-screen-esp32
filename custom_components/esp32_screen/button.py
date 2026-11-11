@@ -21,7 +21,11 @@ async def async_setup_entry(
         hass,
         entry,
         async_add_entities,
-        lambda m, sid: [ScreenButton(m, sid, "wake", "wake"), ScreenButton(m, sid, "show_clock", "sleep")],
+        lambda m, sid: [
+            ScreenButton(m, sid, "wake", "wake"),
+            ScreenButton(m, sid, "show_clock", "sleep"),
+            ScreenButton(m, sid, "clear_pin", "clear_pin"),
+        ],
     )
 
 

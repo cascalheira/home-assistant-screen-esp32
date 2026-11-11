@@ -1055,6 +1055,7 @@ impl Worker {
                         value.as_u64().map(|v| ScreenCommand::SaverRotate(v as u32))
                     }
                     "wake" => Some(ScreenCommand::Wake),
+                    "clear_pin" => Some(ScreenCommand::ClearPin),
                     "sleep" => Some(ScreenCommand::Sleep),
                     _ => None,
                 };

@@ -51,7 +51,14 @@ Assistant.
    sunrise to sunset by Home Assistant's `sun.sun` (07:00-19:00 without it).
    The screensaver has its own theme setting (auto, light or dark; dark by
    default). The doorbell video stays dark.
-7. **Doorbell.** When the doorbell rings, the screen wakes and shows its
+7. **PIN.** Settings › Security sets a PIN (4-8 digits) that opens the
+   settings. With **Lock the screens too**, it also unlocks the dashboard
+   after a restart, the screensaver, or the screensaver delay without
+   touches. Five wrong PINs make the pad wait 30 seconds. Only a salted hash
+   is stored. A forgotten PIN: press **Clear PIN** on the screen's device in
+   Home Assistant, or hold BOOT for 5 seconds (which also forgets Wi-Fi).
+   Notifications and the doorbell still show on a locked screen.
+8. **Doorbell.** When the doorbell rings, the screen wakes and shows its
    camera live (about 3-4 frames a second), with an optional button to open
    the gate or door. Home Assistant turns the camera's RTSP stream into small
    JPEGs with ffmpeg.
@@ -62,7 +69,8 @@ answers, and stays visible while Home Assistant is offline.
 
 Wi-Fi credentials are saved only after a connection with them succeeds. If new
 credentials fail, the screen goes back to the saved network. To start over,
-use **Forget** in settings or hold the **BOOT** button for 5 seconds.
+use **Forget** in settings or hold the **BOOT** button for 5 seconds (this
+also removes the PIN).
 
 ## Layout
 

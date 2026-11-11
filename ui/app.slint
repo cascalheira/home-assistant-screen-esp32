@@ -230,6 +230,7 @@ export component AppWindow inherits Window {
         { glyph: "\u{F07D0}", title: "Home Assistant" },
         { glyph: "\u{F0379}", title: "Display" },
         { glyph: "\u{F0150}", title: "Screensaver" },
+        { glyph: "\u{F033E}", title: "Security" },
         { glyph: "\u{F02FD}", title: "About" },
     ];
     in-out property <int> settings-section: 0;
@@ -239,6 +240,17 @@ export component AppWindow inherits Window {
     in-out property <int> display-brightness-live: 100;
     in property <int> display-theme: 2;
     in property <string> display-theme-detail; // what auto does right now
+    // Security: a PIN is set; it also locks the dashboard.
+    in property <bool> security-has-pin;
+    in property <bool> security-lock-screens;
+
+    // ---- PIN pad (unlock, or set a new PIN)
+    in property <bool> pin-open;
+    in property <string> pin-title;
+    in property <string> pin-message;
+    in property <bool> pin-error;
+    in property <int> pin-length; // digits typed
+    in property <bool> pin-cancellable;
 
     // ---- Screensaver
     in property <int> saver-mode; // 0 off, 1 clock, 2 flip clock
@@ -318,6 +330,13 @@ export component AppWindow inherits Window {
     callback display-brightness-committed(int); // on release
     callback display-theme-picked(int);
     callback restart();
+    callback security-set-pin();
+    callback security-remove-pin();
+    callback security-lock-screens-picked(int);
+    callback pin-key(string);
+    callback pin-backspace();
+    callback pin-ok();
+    callback pin-cancel();
     callback saver-rotate-picked(int);
 
     // Never set. Its only job is to make the glyph embedder include these
@@ -1116,8 +1135,54 @@ export component AppWindow inherits Window {
                         Rectangle { vertical-stretch: 1; }
                     }
 
-                    // About
+                    // Security
                     if root.settings-section == 4: VerticalLayout {
+                        padding: 22px;
+                        spacing: 14px;
+                        SectionTitle { text: "PIN"; }
+                        Text {
+                            text: root.security-has-pin
+                                ? "The settings need the PIN. Forgot it? Press Clear PIN on this screen's device in Home Assistant, or hold the BOOT button for 5 seconds."
+                                : "No PIN: anyone can open the settings.";
+                            font-size: 15px;
+                            color: Theme.muted;
+                            wrap: word-wrap;
+                        }
+                        if root.security-has-pin: SettingRow {
+                            label: "Lock the screens too";
+                            Segmented {
+                                options: ["Off", "On"];
+                                selected: root.security-lock-screens ? 1 : 0;
+                                picked(i) => { root.security-lock-screens-picked(i); }
+                            }
+                        }
+                        if root.security-has-pin: Text {
+                            text: root.security-lock-screens
+                                ? "The PIN is also needed to use the screen: after the screensaver, after the screensaver delay without touches, and after a restart. Notifications and the doorbell still show."
+                                : "Anyone can use the screen; only the settings need the PIN.";
+                            font-size: 15px;
+                            color: Theme.muted;
+                            wrap: word-wrap;
+                        }
+                        Rectangle { vertical-stretch: 1; }
+                        HorizontalLayout {
+                            spacing: 12px;
+                            alignment: start;
+                            Button {
+                                text: root.security-has-pin ? "Change PIN" : "Set PIN";
+                                primary: !root.security-has-pin;
+                                clicked => { root.security-set-pin(); }
+                            }
+                            if root.security-has-pin: Button {
+                                text: "Remove PIN";
+                                destructive: true;
+                                clicked => { root.security-remove-pin(); }
+                            }
+                        }
+                    }
+
+                    // About
+                    if root.settings-section == 5: VerticalLayout {
                         padding: 22px;
                         spacing: 12px;
                         SectionTitle { text: "About this screen"; }
@@ -1197,6 +1262,105 @@ export component AppWindow inherits Window {
                                 } else {
                                     root.confirm-sign-out = false;
                                     root.ha-sign-out();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- PIN pad: above the pages, below the screensaver, notifications
+    // and the doorbell.
+    if root.pin-open: Rectangle {
+        background: Theme.bg;
+        TouchArea { }
+        HorizontalLayout {
+            padding: 32px;
+            spacing: 32px;
+            VerticalLayout {
+                alignment: center;
+                spacing: 16px;
+                horizontal-stretch: 1;
+                Text {
+                    text: "\u{F033E}";
+                    font-family: Icons.family;
+                    font-size: 44px;
+                    color: Theme.accent;
+                }
+                Text {
+                    text: root.pin-title;
+                    font-size: 28px;
+                    font-weight: 600;
+                    color: Theme.text;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    spacing: 14px;
+                    alignment: start;
+                    height: 22px;
+                    for i in max(4, root.pin-length): Rectangle {
+                        width: 18px;
+                        height: 18px;
+                        y: 2px;
+                        border-radius: 9px;
+                        border-width: 2px;
+                        border-color: root.pin-error ? Theme.danger : Theme.muted;
+                        background: i < root.pin-length ? Theme.text : transparent;
+                    }
+                }
+                Text {
+                    text: root.pin-message;
+                    font-size: 17px;
+                    color: root.pin-error ? Theme.danger : Theme.muted;
+                    wrap: word-wrap;
+                    height: 50px;
+                }
+                if root.pin-cancellable: HorizontalLayout {
+                    alignment: start;
+                    Button {
+                        text: "Cancel";
+                        clicked => { root.pin-cancel(); }
+                    }
+                }
+            }
+            VerticalLayout {
+                width: 330px;
+                spacing: 10px;
+                alignment: center;
+                for row in [["1", "2", "3"], ["4", "5", "6"], ["7", "8", "9"], ["⌫", "0", "OK"]]: HorizontalLayout {
+                    spacing: 10px;
+                    for k in row: Rectangle {
+                        height: 82px;
+                        horizontal-stretch: 1;
+                        border-radius: 14px;
+                        background: k == "OK" ? (key-ta.pressed ? Theme.accent-pressed : Theme.accent)
+                            : key-ta.pressed ? Theme.surface-3 : Theme.surface-2;
+                        if k != "⌫": Text {
+                            text: k;
+                            font-size: 30px;
+                            font-weight: 600;
+                            color: k == "OK" ? #ffffff : Theme.text;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        if k == "⌫": Text {
+                            text: "\u{F0B5C}";
+                            font-family: Icons.family;
+                            font-size: 30px;
+                            color: Theme.text;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        key-ta := TouchArea {
+                            clicked => {
+                                if (k == "OK") {
+                                    root.pin-ok();
+                                } else if (k == "⌫") {
+                                    root.pin-backspace();
+                                } else {
+                                    root.pin-key(k);
                                 }
                             }
                         }
