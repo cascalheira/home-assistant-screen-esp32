@@ -53,7 +53,8 @@ The firmware stores the HA base URL and the refresh token in NVS, never the pass
           "x": 0, "y": 0,          // top-left cell, 0-based
           "w": 1, "h": 1,          // size in cells, >= 1, inside the grid
           "temperature_entity": "",  // climate only: "" or a sensor.* entity id
-          "humidity_entity": ""      // climate only: "" or a sensor.* entity id
+          "humidity_entity": "",     // climate only: "" or a sensor.* entity id
+          "icon": ""                 // light only: "" (the bulb) or one of the light icons below
         }
       ]
     }
@@ -103,6 +104,23 @@ mdi:shield-home mdi:cctv
 
 Layouts the integration sends always include `icon`. Layouts saved before page
 icons existed load with `icon: ""`.
+
+Light tile icons. A tile's `icon` is `""` (the default bulb, outline when off)
+or, on `light` tiles only, exactly one of these names. The tile's colour shows
+whether the light is on, as on Home Assistant's dashboards. Every tile in a
+layout the integration sends has `icon`; layouts saved before tile icons
+existed load with `icon: ""`. Picker order:
+
+```
+mdi:ceiling-light mdi:ceiling-light-multiple mdi:chandelier mdi:light-recessed
+mdi:track-light mdi:spotlight-beam mdi:lightbulb-spot mdi:dome-light
+mdi:vanity-light mdi:wall-sconce mdi:wall-sconce-flat mdi:wall-sconce-round
+mdi:coach-lamp mdi:coach-lamp-variant mdi:outdoor-lamp mdi:post-lamp
+mdi:bulkhead-light mdi:light-flood-down mdi:light-flood-up mdi:globe-light
+mdi:lamp mdi:lamps mdi:desk-lamp mdi:floor-lamp mdi:floor-lamp-torchiere
+mdi:lightbulb-fluorescent-tube mdi:led-strip-variant mdi:string-lights
+mdi:television-ambient-light mdi:ceiling-fan-light mdi:lightbulb-group
+```
 
 The screen's content area is 800×412 px; the remaining 68 px are the screen's
 top bar with the page tabs (icon left of the title). The tab row is shown even

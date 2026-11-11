@@ -464,12 +464,15 @@ async def expect_error(coro: Any, code: str, name: str, contains: str = "") -> N
 
 def tile(
     tid: str, kind: str, entity: str, x: int, y: int, w: int = 1, h: int = 1, label: str = "",
-    temperature_entity: str = "", humidity_entity: str = "",
+    temperature_entity: str = "", humidity_entity: str = "", icon: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    t = {
         "id": tid, "kind": kind, "entity_id": entity, "label": label, "x": x, "y": y, "w": w, "h": h,
         "temperature_entity": temperature_entity, "humidity_entity": humidity_entity,
     }
+    if icon is not None:  # left out otherwise: it must default to ""
+        t["icon"] = icon
+    return t
 
 
 TEST_LAYOUT: dict[str, Any] = {
@@ -479,7 +482,7 @@ TEST_LAYOUT: dict[str, Any] = {
             "id": "p1", "title": "Test", "icon": "mdi:home", "cols": 4, "rows": 3,
             "tiles": [
                 tile("t1", "light", "light.ceiling_lights", 0, 0),
-                tile("t2", "light", "light.porch_light", 1, 0),
+                tile("t2", "light", "light.porch_light", 1, 0, icon="mdi:coach-lamp"),
                 tile("t3", "gate", "cover.front_gate", 2, 0),
                 tile("t4", "garage", "cover.garage_door", 3, 0),
                 tile("t5", "valve", "valve.orchard", 0, 1),
@@ -580,6 +583,9 @@ async def main() -> int:
             ("icon not in the allowed list", lambda lay: page(lay).update(icon="mdi:lightbulb"), "icon"),
             ("icon without mdi: prefix", lambda lay: page(lay).update(icon="home"), "icon"),
             ("icon not text", lambda lay: page(lay).update(icon=7), "icon"),
+            ("tile icon not in the light list", lambda lay: page(lay)["tiles"][0].update(icon="mdi:home"), "icon"),
+            ("tile icon on a non-light tile", lambda lay: page(lay)["tiles"][2].update(icon="mdi:coach-lamp"), "light tiles only"),
+            ("tile icon not text", lambda lay: page(lay)["tiles"][0].update(icon=3), "icon"),
             ("sensor on a non-climate tile", lambda lay: page(lay)["tiles"][0].update(humidity_entity="sensor.living_room_humidity"), "only allowed on climate"),
         ]
         for name, mutate, contains in cases:
@@ -688,6 +694,9 @@ async def main() -> int:
               and sim_tiles["t14"]["humidity_entity"] == "sensor.living_room_humidity"
               and sim_tiles["t1"]["temperature_entity"] == "",
               "layout sent to the screen has temperature_entity/humidity_entity on every tile")
+        check(sim_tiles["t2"]["icon"] == "mdi:coach-lamp" and sim_tiles["t1"]["icon"] == ""
+              and all("icon" in t for t in sim_tiles.values()),
+              "layout sent to the screen has tile icons (accepted + defaulted to \"\")")
         check(all(set(vm) == VM_KEYS for vm in first_states.values()), "every view model has exactly the documented keys")
         hv = first_states["t6"]
         check(hv["mode"] == "cool" and hv["target"] == 21 and hv["current"] == 22 and hv["unit"] == "°C"

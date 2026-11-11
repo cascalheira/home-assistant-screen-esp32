@@ -27,6 +27,17 @@ const PAGE_ICONS = [
   "mdi:weather-sunny", "mdi:robot", "mdi:shield-home", "mdi:cctv",
 ];
 
+// Icons a light tile can show instead of the bulb (must match const.LIGHT_ICONS).
+const LIGHT_ICONS = [
+  "mdi:ceiling-light", "mdi:ceiling-light-multiple", "mdi:chandelier", "mdi:light-recessed",
+  "mdi:track-light", "mdi:spotlight-beam", "mdi:lightbulb-spot", "mdi:dome-light", "mdi:vanity-light",
+  "mdi:wall-sconce", "mdi:wall-sconce-flat", "mdi:wall-sconce-round", "mdi:coach-lamp",
+  "mdi:coach-lamp-variant", "mdi:outdoor-lamp", "mdi:post-lamp", "mdi:bulkhead-light", "mdi:light-flood-down",
+  "mdi:light-flood-up", "mdi:globe-light", "mdi:lamp", "mdi:lamps", "mdi:desk-lamp", "mdi:floor-lamp",
+  "mdi:floor-lamp-torchiere", "mdi:lightbulb-fluorescent-tube", "mdi:led-strip-variant", "mdi:string-lights",
+  "mdi:television-ambient-light", "mdi:ceiling-fan-light", "mdi:lightbulb-group",
+];
+
 // <ha-icon> when the frontend has it, else the icon name as text.
 const iconHtml = (icon, cls = "") =>
   customElements.get("ha-icon")
@@ -67,7 +78,7 @@ const normLayout = (layout) => ({
     rows: p.rows,
     tiles: (p.tiles || []).map((t) => ({
       id: t.id, kind: t.kind, entity_id: t.entity_id, label: t.label || "",
-      x: t.x, y: t.y, w: t.w, h: t.h,
+      x: t.x, y: t.y, w: t.w, h: t.h, icon: t.icon || "",
       temperature_entity: t.temperature_entity || "", humidity_entity: t.humidity_entity || "",
     })),
   })),
@@ -361,7 +372,7 @@ class Esp32ScreenPanel extends HTMLElement {
     } else {
       view.status = cap(st.state);
     }
-    view.icon = view.on ? kind.iconOn : kind.icon;
+    view.icon = tile.kind === "light" && tile.icon ? tile.icon : view.on ? kind.iconOn : kind.icon;
     return view;
   }
 
@@ -720,6 +731,7 @@ class Esp32ScreenPanel extends HTMLElement {
         ${this._kindPicker(t.kind)}
         ${this._entityPicker(t.kind, t.entity_id)}
         ${this._sensorPickers(t)}
+        ${this._tileIconPicker(t)}
         <label class="field">Label <span class="muted">(empty = entity name)</span><input data-input="tile-label" value="${esc(t.label)}" maxlength="${LIMITS.label}"></label>
         <div class="row2">
           <label class="field">Width<input type="number" min="1" max="${page.cols}" data-change="tile-w" value="${t.w}"></label>
@@ -739,6 +751,7 @@ class Esp32ScreenPanel extends HTMLElement {
         ${this._kindPicker(tile.kind)}
         ${this._entityPicker(tile.kind, tile.entity_id)}
         ${this._sensorPickers(tile)}
+        ${this._tileIconPicker(tile)}
         <label class="field">Label <span class="muted">(empty = ${esc(st?.attributes.friendly_name || "entity name")})</span><input data-input="tile-label" value="${esc(tile.label)}" maxlength="${LIMITS.label}"></label>
         <div class="row4">
           <label class="field">X<input type="number" min="1" max="${page.cols}" data-change="tile-x" value="${tile.x + 1}"></label>
@@ -788,6 +801,17 @@ class Esp32ScreenPanel extends HTMLElement {
     return `
       ${picker("temperature_entity", "Temperature sensor", (s) => s.attributes.device_class === "temperature" || (!s.attributes.device_class && ["°C", "°F", "K"].includes(unitOf(s))))}
       ${picker("humidity_entity", "Humidity sensor", (s) => s.attributes.device_class === "humidity" || (!s.attributes.device_class && unitOf(s) === "%"))}`;
+  }
+
+  _tileIconPicker(tile) {
+    if (tile.kind !== "light") return "";
+    const current = tile.icon || "";
+    const choice = (icon, title) =>
+      `<button class="icon-choice ${icon === current ? "active" : ""}" data-action="set-tile-icon" data-icon="${icon}" title="${esc(title)}">${iconHtml(icon || KINDS.light.iconOn)}</button>`;
+    return `
+      <div class="field">Icon <span class="muted">(${esc(current ? current.replace(/^mdi:/, "") : "bulb")})</span>
+        <div class="tile-icons">${choice("", "Bulb (default)")}${LIGHT_ICONS.map((i) => choice(i, i.replace(/^mdi:/, ""))).join("")}</div>
+      </div>`;
   }
 
   _kindPicker(kind) {
@@ -949,7 +973,7 @@ class Esp32ScreenPanel extends HTMLElement {
         const kind = this._newTile?.kind || "light";
         this._selTile = null;
         this._entityFilter = "";
-        this._newTile = { x, y, w: 1, h: 1, kind, entity_id: "", label: "", temperature_entity: "", humidity_entity: "" };
+        this._newTile = { x, y, w: 1, h: 1, kind, entity_id: "", label: "", icon: "", temperature_entity: "", humidity_entity: "" };
         this._fitNewTile();
         this._renderGrid();
         this._renderSide();
@@ -966,6 +990,13 @@ class Esp32ScreenPanel extends HTMLElement {
       case "set-kind":
         this._setKind(target.dataset.kind);
         break;
+      case "set-tile-icon": {
+        const tile = this._currentTile();
+        if (!tile) break;
+        tile.icon = target.dataset.icon || "";
+        this._changed({ side: true });
+        break;
+      }
       case "pick-entity":
         this._pickEntity(target.dataset.entity);
         break;
@@ -1002,6 +1033,7 @@ class Esp32ScreenPanel extends HTMLElement {
     tile.kind = kind;
     if (tile.entity_id && !KINDS[kind].domains.includes(tile.entity_id.split(".")[0])) tile.entity_id = "";
     if (kind !== "climate") for (const f of SENSOR_FIELDS) tile[f] = "";
+    if (kind !== "light") tile.icon = "";
     if (this._newTile) this._fitNewTile();
     this._entityFilter = "";
     this._changed({ side: true });
@@ -1026,7 +1058,7 @@ class Esp32ScreenPanel extends HTMLElement {
     const id = this._nextId("t", this._allTileIds());
     page.tiles.push({
       id, kind: t.kind, entity_id: t.entity_id, label: t.label.trim(), x: t.x, y: t.y, w: t.w, h: t.h,
-      temperature_entity: t.temperature_entity || "", humidity_entity: t.humidity_entity || "",
+      icon: t.icon || "", temperature_entity: t.temperature_entity || "", humidity_entity: t.humidity_entity || "",
     });
     this._newTile = null;
     this._selTile = id;
@@ -1428,6 +1460,8 @@ const STYLE = `
   .icon-choice:hover { background: rgba(127,127,127,.15); }
   .icon-choice.active { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
   .icon-choice.none { grid-column: 1 / -1; height: 32px; }
+  .tile-icons { display: grid; grid-template-columns: repeat(auto-fill, minmax(36px, 1fr)); gap: 4px; margin-top: 4px; }
+  .tile-icons .icon-choice { height: 36px; }
   .dtab.active { color: #fff; background: #2b3140; }
   .grid { position: relative; flex: 1; min-height: 0; touch-action: none; }
   .cell, .tile, .ghost { position: absolute; padding: 4px; }

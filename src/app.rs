@@ -1688,6 +1688,11 @@ fn tile_data(tile: &Tile, state: Option<&TileState>) -> TileData {
             s.mode.as_str().into()
         },
         value: big_value(tile, s).into(),
+        icon: if tile.kind == "light" {
+            crate::icons::light_glyph(&tile.icon).into()
+        } else {
+            "".into()
+        },
     }
 }
 

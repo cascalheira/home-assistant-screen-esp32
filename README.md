@@ -23,7 +23,9 @@ Assistant.
    lock, alarm and media tiles open a panel with their controls, including a
    keypad when a lock or alarm needs a code. Layout changes saved in the
    editor appear immediately. Each page has a tab with an optional icon,
-   chosen from 46 room and function icons in the editor. When the titles
+   chosen from 46 room and function icons in the editor. Light tiles can
+   show a lamp of their own instead of the bulb (ceiling, pendant, wall
+   lantern, floodlight, LED strip and more, 31 in all). When the titles
    don't fit, the other pages show only their icons. The top bar shows the
    Wi-Fi signal next to the gear icon, which opens settings: change or forget
    Wi-Fi, sign out of Home Assistant, and the screensaver.
@@ -60,7 +62,7 @@ use **Forget** in settings or hold the **BOOT** button for 5 seconds.
 | `src/ota.rs` | Firmware updates: install, rollback check, `update.bin` from the SD card |
 | `src/logic/` | Code without hardware dependencies (clock text, touch filter, URLs), tested on a computer |
 | `src/sd.rs` | microSD card on SPI, mounted as FAT at `/sdcard` |
-| `src/icons.rs` | The page icons the firmware can draw (must match the editor's list) |
+| `src/icons.rs` | The page and light tile icons the firmware can draw (must match the editor's lists) |
 | `src/saver.rs` | Screensaver: idle timer, clock digits, flip animation, settings |
 | `ui/clock/*.png` | Clock digits, rendered by `scripts/gen_clock_digits.py` |
 | `ui/*.slint` | All screens ([Slint](https://slint.dev), software renderer) |

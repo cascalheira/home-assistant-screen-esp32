@@ -8,6 +8,8 @@ from typing import Any
 from .const import (
     KIND_CLIMATE,
     KIND_DOMAINS,
+    KIND_LIGHT,
+    LIGHT_ICONS,
     LAYOUT_VERSION,
     MAX_COLS,
     MAX_ID_LEN,
@@ -170,6 +172,16 @@ def validate_layout(raw: Any) -> dict[str, Any]:
                         f"{twhere}: {fld} must be a sensor.* entity (got {value!r})"
                     )
                 sensors[fld] = value
+            tile_icon = tile.get("icon", "")
+            if tile_icon is None:
+                tile_icon = ""
+            if not isinstance(tile_icon, str) or (
+                tile_icon and (kind != KIND_LIGHT or tile_icon not in LIGHT_ICONS)
+            ):
+                raise LayoutError(
+                    f"{twhere}: icon {tile_icon!r} is not one the screen can show "
+                    "(light tiles only: \"\" or one of the icons in the editor's picker)"
+                )
             x = _int(tile.get("x"), f"{twhere}: x", 0, cols - 1)
             y = _int(tile.get("y"), f"{twhere}: y", 0, rows - 1)
             w = _int(tile.get("w", 1), f"{twhere}: width", 1, cols - x)
@@ -194,6 +206,7 @@ def validate_layout(raw: Any) -> dict[str, Any]:
                     "y": y,
                     "w": w,
                     "h": h,
+                    "icon": tile_icon,
                     **sensors,
                 }
             )
@@ -213,10 +226,11 @@ def validate_layout(raw: Any) -> dict[str, Any]:
 
 
 def upgrade_layout(layout: dict[str, Any]) -> dict[str, Any]:
-    """Fill fields added after a layout was stored (page icon, sensor fields)."""
+    """Fill fields added after a layout was stored (page and tile icons, sensor fields)."""
     for page in layout.get("pages", []):
         page.setdefault("icon", "")
     for tile in iter_tiles(layout):
+        tile.setdefault("icon", "")
         for fld in SENSOR_FIELDS:
             tile.setdefault(fld, "")
     return layout

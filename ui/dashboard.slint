@@ -197,7 +197,8 @@ export component TileView inherits Rectangle {
         spacing: 2px;
         HorizontalLayout {
             Text {
-                text: Icons.for-tile(root.tile.kind, root.tile.on, root.tile.mode, root.tile.domain);
+                text: root.tile.icon != "" ? root.tile.icon
+                    : Icons.for-tile(root.tile.kind, root.tile.on, root.tile.mode, root.tile.domain);
                 font-family: Icons.family;
                 font-size: 40px;
                 color: !root.tile.available ? Theme.muted : root.tile.on ? root.tint : Theme.text;

@@ -95,6 +95,20 @@ PAGE_ICONS: Final[tuple[str, ...]] = (
     "mdi:robot", "mdi:shield-home", "mdi:cctv",
 )
 
+# Icons a light tile can show instead of the bulb (glyphs compiled in), in
+# picker order. "" = the default bulb.
+LIGHT_ICONS: Final[tuple[str, ...]] = (
+    "mdi:ceiling-light", "mdi:ceiling-light-multiple", "mdi:chandelier",
+    "mdi:light-recessed", "mdi:track-light", "mdi:spotlight-beam", "mdi:lightbulb-spot",
+    "mdi:dome-light", "mdi:vanity-light", "mdi:wall-sconce", "mdi:wall-sconce-flat",
+    "mdi:wall-sconce-round", "mdi:coach-lamp", "mdi:coach-lamp-variant",
+    "mdi:outdoor-lamp", "mdi:post-lamp", "mdi:bulkhead-light", "mdi:light-flood-down",
+    "mdi:light-flood-up", "mdi:globe-light", "mdi:lamp", "mdi:lamps", "mdi:desk-lamp",
+    "mdi:floor-lamp", "mdi:floor-lamp-torchiere", "mdi:lightbulb-fluorescent-tube",
+    "mdi:led-strip-variant", "mdi:string-lights", "mdi:television-ambient-light",
+    "mdi:ceiling-fan-light", "mdi:lightbulb-group",
+)
+
 # Optional sensor fields of a tile; only climate tiles may set them.
 SENSOR_FIELDS: Final = ("temperature_entity", "humidity_entity")
 SENSOR_DOMAIN: Final = "sensor"

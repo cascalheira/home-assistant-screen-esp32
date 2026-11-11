@@ -33,6 +33,8 @@ pub struct Tile {
     pub y: u8,
     pub w: u8,
     pub h: u8,
+    /// Light tiles: "" (the bulb) or an `mdi:` name from `icons::LIGHT_ICONS`.
+    pub icon: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
