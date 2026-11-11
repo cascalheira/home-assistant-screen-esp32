@@ -34,6 +34,17 @@ export struct TileData {
     mode: string, // climate hvac mode
     value: string, // large text on tall climate tiles, e.g. "23.5°"
     icon: string, // glyph chosen in the editor, "" for the kind's own icon
+    // Light: sliders on the tile, their values, and the light's own colour.
+    ctl-brightness: bool,
+    ctl-hue: bool,
+    ctl-kelvin: bool,
+    brightness: int, // 0-100
+    hue: int, // 0-359
+    kelvin: int,
+    kelvin-min: int,
+    kelvin-max: int,
+    has-color: bool,
+    color: color,
 }
 
 export struct ModeItem {

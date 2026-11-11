@@ -481,7 +481,7 @@ TEST_LAYOUT: dict[str, Any] = {
         {
             "id": "p1", "title": "Test", "icon": "mdi:home", "cols": 4, "rows": 3,
             "tiles": [
-                tile("t1", "light", "light.ceiling_lights", 0, 0),
+                {**tile("t1", "light", "light.ceiling_lights", 0, 0), "tap": "controls", "inline": "brightness_color"},
                 tile("t2", "light", "light.porch_light", 1, 0, icon="mdi:coach-lamp"),
                 tile("t3", "gate", "cover.front_gate", 2, 0),
                 tile("t4", "garage", "cover.garage_door", 3, 0),
@@ -585,6 +585,10 @@ async def main() -> int:
             ("icon not text", lambda lay: page(lay).update(icon=7), "icon"),
             ("tile icon not in the light list", lambda lay: page(lay)["tiles"][0].update(icon="mdi:home"), "icon"),
             ("tile icon on a non-light tile", lambda lay: page(lay)["tiles"][2].update(icon="mdi:coach-lamp"), "light tiles only"),
+            ("light tap not allowed", lambda lay: page(lay)["tiles"][0].update(tap="nothing"), "tap must be one of"),
+            ("light inline not allowed", lambda lay: page(lay)["tiles"][0].update(inline="hue"), "inline must be one of"),
+            ("inline on a non-light tile", lambda lay: page(lay)["tiles"][2].update(inline="brightness"), "only allowed on light tiles"),
+            ("tap on a non-light tile", lambda lay: page(lay)["tiles"][2].update(tap="controls"), "only allowed on light tiles"),
             ("tile icon not text", lambda lay: page(lay)["tiles"][0].update(icon=3), "icon"),
             ("sensor on a non-climate tile", lambda lay: page(lay)["tiles"][0].update(humidity_entity="sensor.living_room_humidity"), "only allowed on climate"),
         ]
@@ -697,6 +701,10 @@ async def main() -> int:
         check(sim_tiles["t2"]["icon"] == "mdi:coach-lamp" and sim_tiles["t1"]["icon"] == ""
               and all("icon" in t for t in sim_tiles.values()),
               "layout sent to the screen has tile icons (accepted + defaulted to \"\")")
+        check((sim_tiles["t1"]["tap"], sim_tiles["t1"]["inline"]) == ("controls", "brightness_color")
+              and (sim_tiles["t2"]["tap"], sim_tiles["t2"]["inline"]) == ("toggle", "")
+              and all("tap" in t and "inline" in t for t in sim_tiles.values()),
+              "layout sent to the screen has light options (accepted + defaulted)")
         check(all(set(vm) == VM_KEYS for vm in first_states.values()), "every view model has exactly the documented keys")
         hv = first_states["t6"]
         check(hv["mode"] == "cool" and hv["target"] == 21 and hv["current"] == 22 and hv["unit"] == "°C"
@@ -705,6 +713,12 @@ async def main() -> int:
         check(first_states["t2"]["brightness"] == -1 and first_states["t1"]["brightness"] > 0,
               "brightness -1 for non-dimmable light, 0-100 for dimmable",
               f"t1={first_states['t1']['brightness']} t2={first_states['t2']['brightness']}")
+        cl = first_states["t1"]
+        check(cl["hue"] >= 0 and cl["kelvin_min"] > 0 and cl["kelvin_max"] > cl["kelvin_min"]
+              and first_states["t2"]["hue"] == -1 and first_states["t2"]["kelvin"] == -1
+              and first_states["t3"]["rgb"] == "" and first_states["t3"]["kelvin_max"] == -1,
+              "light colour keys: set for a colour light, -1 for on/off lights and other kinds",
+              f"t1 hue={cl['hue']} kelvin={cl['kelvin']} {cl['kelvin_min']}-{cl['kelvin_max']} rgb={cl['rgb']!r}")
         check(first_states["t7"]["available"] and first_states["t7"]["status"] == "Press", "button view model", sim.describe(first_states["t7"]))
         check(hv["humidity"] == 54 and hv["detail"] == "22 °C → 21 °C · 54%",
               "climate without sensors: humidity from current_humidity, detail with humidity", f"{hv['humidity']} {hv['detail']!r}")
@@ -755,6 +769,10 @@ async def main() -> int:
                 check(result is None, name, detail)
 
         await act("t1", "brightness", 40, lambda v: v["on"] and v["brightness"] == 40 and v["detail"] == "40%", "light brightness 40 -> on 40%", only_this=True)
+        await act("t1", "hue", 240, lambda v: v["on"] and v["hue"] == 240 and v["rgb"] == "#0000ff", "light hue 240 -> blue")
+        await act("t1", "kelvin", 3000, lambda v: v["on"] and v["kelvin"] == 3000, "light kelvin 3000")
+        await expect_error(sim.action("t1", "kelvin", 100), "invalid_action", "kelvin outside the light's range -> invalid_action")
+        await expect_error(sim.action("t9", "hue", 100), "invalid_action", "hue on a switch -> invalid_action")
         await act("t1", "toggle", None, lambda v: not v["on"] and v["brightness"] == 0, "light toggle -> off")
         await act("t1", "toggle", None, lambda v: v["on"], "light toggle -> on")
         await act("t1", "brightness", 0, lambda v: not v["on"], "light brightness 0 -> off")

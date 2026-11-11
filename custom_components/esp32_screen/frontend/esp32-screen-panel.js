@@ -78,7 +78,7 @@ const normLayout = (layout) => ({
     rows: p.rows,
     tiles: (p.tiles || []).map((t) => ({
       id: t.id, kind: t.kind, entity_id: t.entity_id, label: t.label || "",
-      x: t.x, y: t.y, w: t.w, h: t.h, icon: t.icon || "",
+      x: t.x, y: t.y, w: t.w, h: t.h, icon: t.icon || "", tap: t.tap || "toggle", inline: t.inline || "",
       temperature_entity: t.temperature_entity || "", humidity_entity: t.humidity_entity || "",
     })),
   })),
@@ -708,6 +708,7 @@ class Esp32ScreenPanel extends HTMLElement {
               <div class="tile-name">${esc(v.name)}</div>
               ${v.value && t.h >= 2 ? `<div class="tile-value">${esc(v.value)}</div>` : ""}
               <div class="tile-status">${esc(v.status)}${v.detail ? ` · <span class="tile-detail">${esc(v.detail)}</span>` : ""}</div>
+              ${t.kind === "light" && t.inline ? `<div class="tile-bars">${t.inline.includes("brightness") ? `<span class="bar bright"></span>` : ""}${t.inline.includes("color") ? `<span class="bar hue"></span>` : ""}</div>` : ""}
             </div>
             <div class="handle" data-handle="${esc(t.id)}" title="Drag to resize"></div>
           </div>`;
@@ -732,6 +733,7 @@ class Esp32ScreenPanel extends HTMLElement {
         ${this._entityPicker(t.kind, t.entity_id)}
         ${this._sensorPickers(t)}
         ${this._tileIconPicker(t)}
+        ${this._lightOptions(t)}
         <label class="field">Label <span class="muted">(empty = entity name)</span><input data-input="tile-label" value="${esc(t.label)}" maxlength="${LIMITS.label}"></label>
         <div class="row2">
           <label class="field">Width<input type="number" min="1" max="${page.cols}" data-change="tile-w" value="${t.w}"></label>
@@ -752,6 +754,7 @@ class Esp32ScreenPanel extends HTMLElement {
         ${this._entityPicker(tile.kind, tile.entity_id)}
         ${this._sensorPickers(tile)}
         ${this._tileIconPicker(tile)}
+        ${this._lightOptions(tile)}
         <label class="field">Label <span class="muted">(empty = ${esc(st?.attributes.friendly_name || "entity name")})</span><input data-input="tile-label" value="${esc(tile.label)}" maxlength="${LIMITS.label}"></label>
         <div class="row4">
           <label class="field">X<input type="number" min="1" max="${page.cols}" data-change="tile-x" value="${tile.x + 1}"></label>
@@ -801,6 +804,32 @@ class Esp32ScreenPanel extends HTMLElement {
     return `
       ${picker("temperature_entity", "Temperature sensor", (s) => s.attributes.device_class === "temperature" || (!s.attributes.device_class && ["°C", "°F", "K"].includes(unitOf(s))))}
       ${picker("humidity_entity", "Humidity sensor", (s) => s.attributes.device_class === "humidity" || (!s.attributes.device_class && unitOf(s) === "%"))}`;
+  }
+
+  _lightOptions(tile) {
+    if (tile.kind !== "light") return "";
+    const opt = (value, label, current) => `<option value="${value}" ${value === current ? "selected" : ""}>${esc(label)}</option>`;
+    const domain = (tile.entity_id || "").split(".")[0];
+    const note = domain === "switch" && tile.inline ? `<span class="muted">A switch has no brightness or colour: nothing will show.</span>` : "";
+    return `
+      <div class="row2">
+        <label class="field">Tap
+          <select data-change="tile-tap">
+            ${opt("toggle", "Turns on/off", tile.tap || "toggle")}
+            ${opt("controls", "Opens controls", tile.tap || "toggle")}
+          </select>
+        </label>
+        <label class="field">On the tile
+          <select data-change="tile-inline">
+            ${opt("", "Nothing", tile.inline || "")}
+            ${opt("brightness", "Brightness", tile.inline || "")}
+            ${opt("color", "Colour", tile.inline || "")}
+            ${opt("brightness_color", "Brightness + colour", tile.inline || "")}
+          </select>
+        </label>
+      </div>
+      ${note}
+      <p class="muted small">A long press always opens the controls. Sliders need room: brightness and colour fit best on tiles 2 wide or 2 high.</p>`;
   }
 
   _tileIconPicker(tile) {
@@ -973,7 +1002,7 @@ class Esp32ScreenPanel extends HTMLElement {
         const kind = this._newTile?.kind || "light";
         this._selTile = null;
         this._entityFilter = "";
-        this._newTile = { x, y, w: 1, h: 1, kind, entity_id: "", label: "", icon: "", temperature_entity: "", humidity_entity: "" };
+        this._newTile = { x, y, w: 1, h: 1, kind, entity_id: "", label: "", icon: "", tap: "toggle", inline: "", temperature_entity: "", humidity_entity: "" };
         this._fitNewTile();
         this._renderGrid();
         this._renderSide();
@@ -1033,7 +1062,7 @@ class Esp32ScreenPanel extends HTMLElement {
     tile.kind = kind;
     if (tile.entity_id && !KINDS[kind].domains.includes(tile.entity_id.split(".")[0])) tile.entity_id = "";
     if (kind !== "climate") for (const f of SENSOR_FIELDS) tile[f] = "";
-    if (kind !== "light") tile.icon = "";
+    if (kind !== "light") Object.assign(tile, { icon: "", tap: "toggle", inline: "" });
     if (this._newTile) this._fitNewTile();
     this._entityFilter = "";
     this._changed({ side: true });
@@ -1058,7 +1087,7 @@ class Esp32ScreenPanel extends HTMLElement {
     const id = this._nextId("t", this._allTileIds());
     page.tiles.push({
       id, kind: t.kind, entity_id: t.entity_id, label: t.label.trim(), x: t.x, y: t.y, w: t.w, h: t.h,
-      icon: t.icon || "", temperature_entity: t.temperature_entity || "", humidity_entity: t.humidity_entity || "",
+      icon: t.icon || "", tap: t.tap || "toggle", inline: t.inline || "", temperature_entity: t.temperature_entity || "", humidity_entity: t.humidity_entity || "",
     });
     this._newTile = null;
     this._selTile = id;
@@ -1113,6 +1142,13 @@ class Esp32ScreenPanel extends HTMLElement {
       this._newTile = null;
       this._renderPagebar();
       this._changed({ side: true });
+      return;
+    }
+    if (key === "tile-tap" || key === "tile-inline") {
+      const tile = this._currentTile();
+      if (!tile) return;
+      tile[key.slice(5)] = e.target.value;
+      this._changed({ side: true, grid: !this._newTile });
       return;
     }
     if (SENSOR_FIELDS.includes(key)) {
@@ -1460,6 +1496,11 @@ const STYLE = `
   .icon-choice:hover { background: rgba(127,127,127,.15); }
   .icon-choice.active { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
   .icon-choice.none { grid-column: 1 / -1; height: 32px; }
+  .tile-bars { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
+  .tile-bars .bar { display: block; height: 6px; border-radius: 3px; }
+  .tile-bars .bright { background: linear-gradient(90deg, var(--tile-accent) 60%, rgba(127,127,127,.3) 60%); }
+  .tile-bars .hue { background: linear-gradient(90deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00); }
+  .small { font-size: 12px; margin: 4px 0 0; }
   .tile-icons { display: grid; grid-template-columns: repeat(auto-fill, minmax(36px, 1fr)); gap: 4px; margin-top: 4px; }
   .tile-icons .icon-choice { height: 36px; }
   .dtab.active { color: #fff; background: #2b3140; }

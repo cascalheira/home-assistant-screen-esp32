@@ -114,7 +114,6 @@ struct State {
     /// `send at` is None once sent.
     pending_target: Option<(f64, Option<Instant>, Instant)>,
     dimmer_tile: Option<String>,
-    dimmer_touched: Option<Instant>,
     /// Tile shown in the action sheet (blind, lock, alarm, media) and the
     /// code typed on its keypad.
     sheet_tile: Option<String>,
@@ -215,7 +214,6 @@ impl App {
                 climate_tile: None,
                 pending_target: None,
                 dimmer_tile: None,
-                dimmer_touched: None,
                 sheet_tile: None,
                 sheet_code: String::new(),
                 sheet_touched: None,
@@ -495,12 +493,17 @@ impl Shared {
                 s.action(&id, "set_mode", Some(json!(mode.as_str())));
             }
         });
-        on!(on_dimmer_commit, |s, value| {
-            let id = s.st.borrow().dimmer_tile.clone();
-            if let Some(id) = id {
-                s.st.borrow_mut().dimmer_touched = Some(Instant::now());
-                s.action(&id, "brightness", Some(json!(value)));
-            }
+        on!(on_dimmer_commit, |s, value| s.dimmer_action("brightness", value));
+        on!(on_dimmer_hue_commit, |s, value| s.dimmer_action("hue", value));
+        on!(on_dimmer_kelvin_commit, |s, value| s.dimmer_action("kelvin", value));
+        on!(on_tile_adjust, |s, id, what, value| {
+            let action = match what.as_str() {
+                "brightness" => "brightness",
+                "hue" => "hue",
+                "kelvin" => "kelvin",
+                _ => return,
+            };
+            s.action(&id, action, Some(json!(value)));
         });
         on!(on_dimmer_toggle, |s| {
             let id = s.st.borrow().dimmer_tile.clone();
@@ -1312,7 +1315,11 @@ impl Shared {
         }
         match tile.kind.as_str() {
             "climate" => self.open_climate(&tile.id),
-            "light" if long && state.brightness >= 0 => self.open_dimmer(&tile.id),
+            "light" if (long || tile.tap_opens_controls()) && state.has_light_controls() => {
+                self.open_dimmer(&tile.id)
+            }
+            // Taps that open controls never toggle, even without controls.
+            "light" if tile.tap_opens_controls() => {}
             // Locks and alarm panels always go through the sheet: a stray tap
             // must never unlock a door or disarm the alarm.
             "lock" | "alarm" => self.open_sheet(&tile.id),
@@ -1339,12 +1346,15 @@ impl Shared {
         }
     }
 
-    fn open_dimmer(&self, id: &str) {
-        {
-            let mut st = self.st.borrow_mut();
-            st.dimmer_tile = Some(id.to_string());
-            st.dimmer_touched = None;
+    fn dimmer_action(&self, action: &'static str, value: i32) {
+        let id = self.st.borrow().dimmer_tile.clone();
+        if let Some(id) = id {
+            self.action(&id, action, Some(json!(value)));
         }
+    }
+
+    fn open_dimmer(&self, id: &str) {
+        self.st.borrow_mut().dimmer_tile = Some(id.to_string());
         self.refresh_popups();
         if let Some(ui) = self.ui() {
             ui.set_dimmer_open(true);
@@ -1648,15 +1658,18 @@ impl Shared {
         if let Some((tile, state)) = dimmer_id.and_then(|id| self.find_tile(&id)) {
             ui.set_dimmer_name(tile.label.as_str().into());
             ui.set_dimmer_on(state.on);
-            // Don't fight the finger: skip state echoes right after a change.
-            let recently = self
-                .st
-                .borrow()
-                .dimmer_touched
-                .is_some_and(|t| t.elapsed() < Duration::from_secs(2));
-            if !recently && state.on && state.brightness >= 0 {
-                ui.set_dimmer_value(state.brightness.max(1));
-            }
+            // The sliders keep their own value while touched.
+            ui.set_dimmer_value(state.brightness);
+            ui.set_dimmer_hue(state.hue);
+            let (low, high) = state.kelvin_range().unwrap_or((-1, -1));
+            ui.set_dimmer_kelvin_min(low);
+            ui.set_dimmer_kelvin_max(high);
+            ui.set_dimmer_kelvin(state.kelvin.max(0));
+            ui.set_dimmer_tint(
+                light_color(&state)
+                    .filter(|_| state.on)
+                    .unwrap_or(slint::Color::from_rgb_u8(0xf5, 0xb8, 0x3d)),
+            );
         }
     }
 }
@@ -1693,7 +1706,25 @@ fn tile_data(tile: &Tile, state: Option<&TileState>) -> TileData {
         } else {
             "".into()
         },
+        ctl_brightness: tile.inline_brightness() && s.brightness >= 0,
+        ctl_hue: tile.inline_color() && s.hue >= 0,
+        ctl_kelvin: tile.inline_color() && s.kelvin_range().is_some(),
+        brightness: s.brightness.max(0),
+        hue: s.hue.max(0),
+        kelvin: s.kelvin.max(0),
+        kelvin_min: s.kelvin_min,
+        kelvin_max: s.kelvin_max,
+        has_color: tile.kind == "light" && s.on && light_color(s).is_some(),
+        color: light_color(s).unwrap_or_default(),
     }
+}
+
+/// The light's own colour, for its tile and controls. Near-black colours
+/// (HA reports some at very low brightness) would hide the tile, so they
+/// don't count.
+fn light_color(s: &TileState) -> Option<slint::Color> {
+    let (r, g, b) = s.color()?;
+    (r.max(g).max(b) >= 64).then(|| slint::Color::from_rgb_u8(r, g, b))
 }
 
 /// Large value for climate and sensor tiles; the UI shows it on tall tiles

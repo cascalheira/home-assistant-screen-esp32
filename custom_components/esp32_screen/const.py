@@ -58,7 +58,7 @@ KIND_DOMAINS: Final[dict[str, tuple[str, ...]]] = {
 }
 
 KIND_ACTIONS: Final[dict[str, tuple[str, ...]]] = {
-    KIND_LIGHT: ("toggle", "brightness"),
+    KIND_LIGHT: ("toggle", "brightness", "hue", "kelvin"),
     KIND_GATE: ("toggle", "open", "close", "stop"),
     KIND_GARAGE: ("toggle", "open", "close", "stop"),
     KIND_VALVE: ("toggle", "open", "close"),
@@ -108,6 +108,10 @@ LIGHT_ICONS: Final[tuple[str, ...]] = (
     "mdi:led-strip-variant", "mdi:string-lights", "mdi:television-ambient-light",
     "mdi:ceiling-fan-light", "mdi:lightbulb-group",
 )
+
+# Light tile options (docs/protocol.md, section 2). The first is the default.
+LIGHT_TAP: Final = ("toggle", "controls")
+LIGHT_INLINE: Final = ("", "brightness", "color", "brightness_color")
 
 # Optional sensor fields of a tile; only climate tiles may set them.
 SENSOR_FIELDS: Final = ("temperature_entity", "humidity_entity")

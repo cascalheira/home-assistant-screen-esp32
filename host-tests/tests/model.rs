@@ -47,3 +47,39 @@ fn null_numbers_are_none() {
     assert_eq!(state.current, None);
     assert_eq!(state.position, 40);
 }
+
+#[test]
+fn light_options() {
+    let layout: Layout = serde_json::from_str(
+        r#"{"pages":[{"tiles":[
+            {"id":"a","kind":"light","tap":"controls","inline":"brightness_color"},
+            {"id":"b","kind":"light"},
+            {"id":"c","kind":"gate","tap":"controls","inline":"brightness"}]}]}"#,
+    )
+    .unwrap();
+    let [a, b, c] = &layout.pages[0].tiles[..] else {
+        panic!("three tiles")
+    };
+    assert!(a.tap_opens_controls() && a.inline_brightness() && a.inline_color());
+    assert!(!b.tap_opens_controls() && !b.inline_brightness() && !b.inline_color());
+    // Only light tiles have these options.
+    assert!(!c.tap_opens_controls() && !c.inline_brightness());
+}
+
+#[test]
+fn light_colour_state() {
+    let state: TileState = serde_json::from_str(
+        r##"{"on":true,"brightness":60,"hue":240,"rgb":"#0000ff",
+             "kelvin":3000,"kelvin_min":2000,"kelvin_max":6500}"##,
+    )
+    .unwrap();
+    assert!(state.has_light_controls());
+    assert_eq!(state.color(), Some((0, 0, 255)));
+    assert_eq!(state.kelvin_range(), Some((2000, 6500)));
+
+    let plain: TileState = serde_json::from_str(r#"{"on":true,"rgb":"blue"}"#).unwrap();
+    assert!(!plain.has_light_controls());
+    assert_eq!((plain.hue, plain.kelvin), (-1, -1));
+    assert_eq!(plain.color(), None);
+    assert_eq!(plain.kelvin_range(), None);
+}

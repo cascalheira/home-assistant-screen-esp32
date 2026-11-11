@@ -16,8 +16,11 @@ Assistant.
 3. **Dashboard.** Pages of tiles on a grid, as laid out in the **Screens**
    editor in Home Assistant. Tap a light, gate, garage door or valve to toggle
    it. Tap a toggle to enable or disable an automation, or to switch an
-   input_boolean or switch. Long-press a dimmable light for a brightness
-   slider. Tap an AC tile for target temperature and mode. AC tiles can take
+   input_boolean or switch. Long-press a light for its controls: brightness,
+   colour and colour temperature, whichever it supports. Per light tile, the
+   editor can make a tap open those controls instead of switching the light
+   (so a stray tap can't turn it off), and put brightness and colour sliders
+   on the tile itself. Tiles of coloured lights glow in the light's colour. Tap an AC tile for target temperature and mode. AC tiles can take
    their temperature and humidity from separate sensors, chosen in the editor.
    Scene tiles run a scene, script or button. Sensor tiles show a value. Blind,
    lock, alarm and media tiles open a panel with their controls, including a

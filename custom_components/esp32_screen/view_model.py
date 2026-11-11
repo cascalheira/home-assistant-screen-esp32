@@ -44,6 +44,33 @@ HVAC_ACTION_LABELS: dict[str, str] = {
 MOVING_STATES = ("opening", "closing")
 
 
+COLOR_MODES = ("hs", "xy", "rgb", "rgbw", "rgbww")
+
+
+def _light_color(
+    vm: dict[str, Any], attrs: Any, modes: list[str], on: bool
+) -> None:
+    """Hue, colour temperature and the light's current colour."""
+    if any(mode in COLOR_MODES for mode in modes):
+        hs = attrs.get("hs_color")
+        hue = _float(hs[0]) if isinstance(hs, (list, tuple)) and hs else None
+        vm["hue"] = round(hue) % 360 if hue is not None else 0
+    if "color_temp" in modes:
+        low = _float(attrs.get("min_color_temp_kelvin"))
+        high = _float(attrs.get("max_color_temp_kelvin"))
+        if low and high and high > low:
+            vm["kelvin_min"] = round(low)
+            vm["kelvin_max"] = round(high)
+            kelvin = _float(attrs.get("color_temp_kelvin"))
+            vm["kelvin"] = round(min(max(kelvin, low), high)) if kelvin else 0
+    rgb = attrs.get("rgb_color")
+    if on and isinstance(rgb, (list, tuple)) and len(rgb) == 3:
+        try:
+            vm["rgb"] = "#" + "".join(f"{max(0, min(255, int(c))):02x}" for c in rgb)
+        except (TypeError, ValueError):
+            pass
+
+
 def base_view_model() -> dict[str, Any]:
     """Return a view model with every key present and neutral values."""
     return {
@@ -65,6 +92,11 @@ def base_view_model() -> dict[str, Any]:
         "position": -1,
         "volume": -1,
         "code_required": False,
+        "hue": -1,
+        "rgb": "",
+        "kelvin": -1,
+        "kelvin_min": -1,
+        "kelvin_max": -1,
     }
 
 
@@ -159,6 +191,7 @@ def tile_view_model(
             vm["brightness"] = pct
             if on:
                 vm["detail"] = f"{pct}%"
+        _light_color(vm, attrs, modes, on)
         return vm
 
     if domain == "automation":

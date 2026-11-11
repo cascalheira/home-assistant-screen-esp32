@@ -35,6 +35,27 @@ pub struct Tile {
     pub h: u8,
     /// Light tiles: "" (the bulb) or an `mdi:` name from `icons::LIGHT_ICONS`.
     pub icon: String,
+    /// Light tiles: "toggle" (or "") turns the light on/off on a tap,
+    /// "controls" opens its controls instead.
+    pub tap: String,
+    /// Light tiles: sliders on the tile: "", "brightness", "color" or
+    /// "brightness_color".
+    pub inline: String,
+}
+
+impl Tile {
+    /// A tap opens the controls rather than toggling.
+    pub fn tap_opens_controls(&self) -> bool {
+        self.kind == "light" && self.tap == "controls"
+    }
+
+    pub fn inline_brightness(&self) -> bool {
+        self.kind == "light" && self.inline.contains("brightness")
+    }
+
+    pub fn inline_color(&self) -> bool {
+        self.kind == "light" && self.inline.contains("color")
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -64,6 +85,33 @@ pub struct TileState {
     pub mode: String,
     pub modes: Vec<String>,
     pub unit: String,
+    /// Light hue 0-359; -1 when it takes no colour.
+    pub hue: i32,
+    /// Light colour while on, "#rrggbb"; "" when unknown.
+    pub rgb: String,
+    /// Light colour temperature and its range; -1 when it has none.
+    pub kelvin: i32,
+    pub kelvin_min: i32,
+    pub kelvin_max: i32,
+}
+
+impl TileState {
+    /// The light has something to adjust beyond on/off.
+    pub fn has_light_controls(&self) -> bool {
+        self.brightness >= 0 || self.hue >= 0 || self.kelvin_range().is_some()
+    }
+
+    pub fn kelvin_range(&self) -> Option<(i32, i32)> {
+        (self.kelvin_min > 0 && self.kelvin_max > self.kelvin_min)
+            .then_some((self.kelvin_min, self.kelvin_max))
+    }
+
+    /// `rgb` as red, green, blue.
+    pub fn color(&self) -> Option<(u8, u8, u8)> {
+        let hex = self.rgb.strip_prefix('#').filter(|h| h.len() == 6)?;
+        let channel = |i: usize| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok();
+        Some((channel(0)?, channel(2)?, channel(4)?))
+    }
 }
 
 impl Default for TileState {
@@ -87,6 +135,11 @@ impl Default for TileState {
             mode: String::new(),
             modes: Vec::new(),
             unit: String::new(),
+            hue: -1,
+            rgb: String::new(),
+            kelvin: -1,
+            kelvin_min: -1,
+            kelvin_max: -1,
         }
     }
 }

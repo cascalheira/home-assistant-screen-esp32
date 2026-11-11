@@ -10,6 +10,8 @@ from .const import (
     KIND_DOMAINS,
     KIND_LIGHT,
     LIGHT_ICONS,
+    LIGHT_INLINE,
+    LIGHT_TAP,
     LAYOUT_VERSION,
     MAX_COLS,
     MAX_ID_LEN,
@@ -182,6 +184,19 @@ def validate_layout(raw: Any) -> dict[str, Any]:
                     f"{twhere}: icon {tile_icon!r} is not one the screen can show "
                     "(light tiles only: \"\" or one of the icons in the editor's picker)"
                 )
+            options: dict[str, str] = {}
+            for fld, allowed in (("tap", LIGHT_TAP), ("inline", LIGHT_INLINE)):
+                value = tile.get(fld)
+                if value is None:
+                    value = allowed[0]
+                if value not in allowed:
+                    raise LayoutError(
+                        f"{twhere}: {fld} must be one of "
+                        f"{', '.join(repr(a) for a in allowed)} (got {value!r})"
+                    )
+                if value != allowed[0] and kind != KIND_LIGHT:
+                    raise LayoutError(f"{twhere}: {fld} is only allowed on light tiles")
+                options[fld] = value
             x = _int(tile.get("x"), f"{twhere}: x", 0, cols - 1)
             y = _int(tile.get("y"), f"{twhere}: y", 0, rows - 1)
             w = _int(tile.get("w", 1), f"{twhere}: width", 1, cols - x)
@@ -207,6 +222,7 @@ def validate_layout(raw: Any) -> dict[str, Any]:
                     "w": w,
                     "h": h,
                     "icon": tile_icon,
+                    **options,
                     **sensors,
                 }
             )
@@ -226,11 +242,13 @@ def validate_layout(raw: Any) -> dict[str, Any]:
 
 
 def upgrade_layout(layout: dict[str, Any]) -> dict[str, Any]:
-    """Fill fields added after a layout was stored (page and tile icons, sensor fields)."""
+    """Fill fields added after a layout was stored (icons, light options, sensor fields)."""
     for page in layout.get("pages", []):
         page.setdefault("icon", "")
     for tile in iter_tiles(layout):
         tile.setdefault("icon", "")
+        tile.setdefault("tap", LIGHT_TAP[0])
+        tile.setdefault("inline", LIGHT_INLINE[0])
         for fld in SENSOR_FIELDS:
             tile.setdefault(fld, "")
     return layout

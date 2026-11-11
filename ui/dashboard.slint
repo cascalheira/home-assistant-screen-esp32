@@ -177,12 +177,129 @@ export global Icons {
     }
 }
 
+// A light level on a rounded bar: brightness (filled from the left), hue or
+// colour temperature (gradient with a knob). Reports the value on release.
+// It shows its own value while the finger is down and for a moment after,
+// until Home Assistant's state catches up.
+export component LevelSlider inherits Rectangle {
+    in property <int> value; // from Home Assistant
+    in property <int> minimum: 0;
+    in property <int> maximum: 100;
+    in property <string> style: "brightness"; // brightness | hue | kelvin
+    in property <color> fill: #f5b83d;
+    in property <bool> enabled: true;
+    // The value shown, and whether it is the finger's rather than HA's.
+    out property <int> shown: ta.pressed || root.holding ? root.local : root.value;
+    out property <bool> active: ta.pressed || root.holding;
+    callback changed(int);
+    callback committed(int);
+    callback settled();
+
+    property <int> local;
+    property <bool> holding: false;
+    property <float> frac: Math.clamp((root.shown - root.minimum) / Math.max(1, root.maximum - root.minimum), 0, 1);
+
+    border-radius: self.height / 2;
+    background: Theme.surface-2;
+
+    // The software renderer can't round a gradient: square gradient between
+    // two round caps in its end colours.
+    if root.style == "hue": Rectangle {
+        Rectangle {
+            x: 0px;
+            width: root.height;
+            border-radius: root.height / 2;
+            background: #ff0000;
+        }
+        Rectangle {
+            x: root.width - root.height;
+            width: root.height;
+            border-radius: root.height / 2;
+            background: #ff0000;
+        }
+        Rectangle {
+            x: root.height / 2;
+            width: root.width - root.height;
+            background: @linear-gradient(90deg, #ff0000 0%, #ffff00 17%, #00ff00 33%, #00ffff 50%, #0000ff 67%, #ff00ff 83%, #ff0000 100%);
+        }
+    }
+    if root.style == "kelvin": Rectangle {
+        Rectangle {
+            x: 0px;
+            width: root.height;
+            border-radius: root.height / 2;
+            background: #ff9d42;
+        }
+        Rectangle {
+            x: root.width - root.height;
+            width: root.height;
+            border-radius: root.height / 2;
+            background: #dbe7ff;
+        }
+        Rectangle {
+            x: root.height / 2;
+            width: root.width - root.height;
+            background: @linear-gradient(90deg, #ff9d42 0%, #ffd2a1 40%, #fff4e8 65%, #dbe7ff 100%);
+        }
+    }
+    if root.style == "brightness" && root.shown >= root.minimum: Rectangle {
+        x: 0px;
+        width: Math.max(root.height, root.width * root.frac);
+        border-radius: root.height / 2;
+        background: root.fill;
+    }
+    if root.style != "brightness": Rectangle {
+        x: (root.width - root.height) * root.frac;
+        width: root.height;
+        border-radius: root.height / 2;
+        border-width: 3px;
+        border-color: #ffffff;
+    }
+
+    // A little taller than the bar: easier to hit with a finger.
+    ta := TouchArea {
+        y: -6px;
+        height: root.height + 12px;
+        enabled: root.enabled;
+        function set-from(px: length) {
+            root.local = Math.round(root.minimum + Math.clamp(px / root.width, 0, 1) * (root.maximum - root.minimum));
+            root.changed(root.local);
+        }
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) {
+                self.set-from(self.mouse-x);
+            } else if (e.kind == PointerEventKind.up) {
+                // Commit on release, even if the finger slid off the bar.
+                root.holding = true;
+                root.committed(root.local);
+            }
+        }
+        moved => { self.set-from(self.mouse-x); }
+    }
+    Timer {
+        interval: 2500ms;
+        running: root.holding && !ta.pressed;
+        triggered => {
+            root.holding = false;
+            root.settled();
+        }
+    }
+}
+
 export component TileView inherits Rectangle {
     in property <TileData> tile;
     callback tapped();
     callback long-pressed();
+    // A slider on the tile was released: "brightness" | "hue" | "kelvin".
+    callback adjust(string, int);
 
-    property <color> tint: Icons.tint(root.tile.kind, root.tile.mode);
+    // The light's own colour while it is on, else the kind's.
+    property <color> tint: root.tile.has-color ? root.tile.color : Icons.tint(root.tile.kind, root.tile.mode);
+    property <bool> controls: root.tile.ctl-brightness || root.tile.ctl-hue || root.tile.ctl-kelvin;
+    // Three sliders only fit on tall tiles; colour temperature gives way.
+    property <bool> show-kelvin: root.tile.ctl-kelvin && (root.height >= 150px || !(root.tile.ctl-brightness && root.tile.ctl-hue));
+    property <string> glyph: root.tile.icon != "" ? root.tile.icon
+        : Icons.for-tile(root.tile.kind, root.tile.on, root.tile.mode, root.tile.domain);
     property <bool> long-fired: false;
 
     border-radius: 18px;
@@ -192,13 +309,12 @@ export component TileView inherits Rectangle {
     border-width: root.tile.on && root.tile.available ? 2px : 0px;
     border-color: root.tint.with-alpha(0.55);
 
-    VerticalLayout {
+    if !root.controls: VerticalLayout {
         padding: 14px;
         spacing: 2px;
         HorizontalLayout {
             Text {
-                text: root.tile.icon != "" ? root.tile.icon
-                    : Icons.for-tile(root.tile.kind, root.tile.on, root.tile.mode, root.tile.domain);
+                text: root.glyph;
                 font-family: Icons.family;
                 font-size: 40px;
                 color: !root.tile.available ? Theme.muted : root.tile.on ? root.tint : Theme.text;
@@ -237,6 +353,40 @@ export component TileView inherits Rectangle {
         }
     }
 
+    // With sliders: icon and names on top, sliders (above the touch area,
+    // so they get their own touches) at the bottom.
+    if root.controls: VerticalLayout {
+        padding: 12px;
+        HorizontalLayout {
+            spacing: 10px;
+            alignment: start;
+            Text {
+                text: root.glyph;
+                font-family: Icons.family;
+                font-size: 30px;
+                color: !root.tile.available ? Theme.muted : root.tile.on ? root.tint : Theme.text;
+                vertical-alignment: center;
+            }
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    text: root.tile.label;
+                    font-size: 17px;
+                    font-weight: 600;
+                    color: root.tile.available ? Theme.text : Theme.muted;
+                    overflow: elide;
+                }
+                Text {
+                    text: root.tile.detail == "" ? root.tile.status : root.tile.status + " · " + root.tile.detail;
+                    font-size: 13px;
+                    color: root.tile.on && root.tile.available ? root.tint : Theme.muted;
+                    overflow: elide;
+                }
+            }
+        }
+        Rectangle { vertical-stretch: 1; }
+    }
+
     ta := TouchArea {
         pointer-event(e) => {
             if (e.kind == PointerEventKind.down) {
@@ -249,6 +399,41 @@ export component TileView inherits Rectangle {
             }
         }
     }
+    if root.controls: VerticalLayout {
+        padding: 12px;
+        padding-top: 56px;
+        spacing: 8px;
+        alignment: end;
+        if root.tile.ctl-brightness: LevelSlider {
+            min-height: 16px;
+            preferred-height: 30px;
+            enabled: root.tile.available;
+            minimum: 1;
+            value: root.tile.on ? root.tile.brightness : 0;
+            fill: root.tint;
+            committed(v) => { root.adjust("brightness", v); }
+        }
+        if root.tile.ctl-hue: LevelSlider {
+            min-height: 16px;
+            preferred-height: 30px;
+            enabled: root.tile.available;
+            style: "hue";
+            maximum: 359;
+            value: root.tile.hue;
+            committed(v) => { root.adjust("hue", v); }
+        }
+        if root.show-kelvin: LevelSlider {
+            min-height: 16px;
+            preferred-height: 30px;
+            enabled: root.tile.available;
+            style: "kelvin";
+            minimum: root.tile.kelvin-min;
+            maximum: root.tile.kelvin-max;
+            value: root.tile.kelvin;
+            committed(v) => { root.adjust("kelvin", v); }
+        }
+    }
+
     Timer {
         interval: 600ms;
         running: ta.pressed && !root.long-fired;
@@ -425,55 +610,73 @@ export component ClimateSheet inherits Sheet {
 }
 
 export component DimmerSheet inherits Sheet {
-    in-out property <int> value; // 0-100
+    in property <int> value; // brightness 0-100; -1 when not dimmable
     in property <bool> is-on;
+    in property <int> hue: -1; // -1 when the light takes no colour
+    in property <int> kelvin;
+    in property <int> kelvin-min: -1; // -1 when it has no colour temperature
+    in property <int> kelvin-max;
+    in property <color> tint: #f5b83d;
     callback commit(int);
+    callback hue-commit(int);
+    callback kelvin-commit(int);
     callback toggle();
+
+    // The brightness under the finger, while it moves.
+    property <int> live;
+    property <bool> live-active: false;
 
     VerticalLayout {
         padding-left: 40px;
         padding-right: 40px;
         padding-bottom: 28px;
-        spacing: 28px;
-        Text {
-            text: root.is-on ? root.value + "%" : "Off";
-            font-size: 48px;
-            font-weight: 600;
-            color: root.is-on ? #f5b83d : Theme.muted;
-            horizontal-alignment: center;
-        }
-        track := Rectangle {
-            height: 72px;
-            border-radius: 18px;
-            background: Theme.surface-2;
-            clip: true;
-            Rectangle {
-                x: 0px;
-                width: parent.width * root.value / 100;
-                border-radius: 18px;
-                background: #f5b83d;
-            }
-            TouchArea {
-                function set-from(px: length) {
-                    root.value = Math.round(Math.clamp(px / track.width * 100, 1, 100));
-                }
-                pointer-event(e) => {
-                    if (e.kind == PointerEventKind.down) {
-                        self.set-from(self.mouse-x);
-                    } else if (e.kind == PointerEventKind.up) {
-                        // Commit on release, even if the finger slid off the track.
-                        root.commit(root.value);
-                    }
-                }
-                moved => { self.set-from(self.mouse-x); }
-            }
-        }
+        spacing: 18px;
         HorizontalLayout {
-            alignment: center;
-            Button {
-                text: root.is-on ? "Turn off" : "Turn on";
-                clicked => { root.toggle(); }
+            spacing: 20px;
+            Text {
+                text: root.live-active ? root.live + "%"
+                    : !root.is-on ? "Off" : root.value >= 0 ? root.value + "%" : "On";
+                font-size: 44px;
+                font-weight: 600;
+                color: root.is-on || root.live-active ? root.tint : Theme.muted;
+                vertical-alignment: center;
             }
+            Rectangle { horizontal-stretch: 1; }
+            VerticalLayout {
+                alignment: center;
+                Button {
+                    text: root.is-on ? "Turn off" : "Turn on";
+                    clicked => { root.toggle(); }
+                }
+            }
+        }
+        Rectangle { vertical-stretch: 1; }
+        if root.value >= 0: LevelSlider {
+            height: 64px;
+            minimum: 1;
+            value: root.is-on ? root.value : 0;
+            fill: root.tint;
+            changed(v) => {
+                root.live = v;
+                root.live-active = true;
+            }
+            committed(v) => { root.commit(v); }
+            settled => { root.live-active = false; }
+        }
+        if root.hue >= 0: LevelSlider {
+            height: 52px;
+            style: "hue";
+            maximum: 359;
+            value: root.hue;
+            committed(v) => { root.hue-commit(v); }
+        }
+        if root.kelvin-min > 0: LevelSlider {
+            height: 52px;
+            style: "kelvin";
+            minimum: root.kelvin-min;
+            maximum: root.kelvin-max;
+            value: root.kelvin;
+            committed(v) => { root.kelvin-commit(v); }
         }
     }
 }

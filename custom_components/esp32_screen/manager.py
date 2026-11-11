@@ -748,6 +748,12 @@ class ScreenManager:
         if domain == "light":
             if action == "toggle":
                 return ("light", "toggle"), {}
+            if action == "hue":
+                return ("light", "turn_on"), {"hs_color": [round(number(0, 360)) % 360, 100]}
+            if action == "kelvin":
+                low = state.attributes.get("min_color_temp_kelvin") or 1000
+                high = state.attributes.get("max_color_temp_kelvin") or 40000
+                return ("light", "turn_on"), {"color_temp_kelvin": round(number(low, high))}
             pct = round(number(0, 100))
             if pct == 0:
                 return ("light", "turn_off"), {}

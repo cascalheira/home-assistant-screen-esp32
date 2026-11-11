@@ -54,7 +54,9 @@ The firmware stores the HA base URL and the refresh token in NVS, never the pass
           "w": 1, "h": 1,          // size in cells, >= 1, inside the grid
           "temperature_entity": "",  // climate only: "" or a sensor.* entity id
           "humidity_entity": "",     // climate only: "" or a sensor.* entity id
-          "icon": ""                 // light only: "" (the bulb) or one of the light icons below
+          "icon": "",                // light only: "" (the bulb) or one of the light icons below
+          "tap": "toggle",           // light only: "toggle" | "controls" (open the light's controls)
+          "inline": ""               // light only: "" | "brightness" | "color" | "brightness_color"
         }
       ]
     }
@@ -104,6 +106,14 @@ mdi:shield-home mdi:cctv
 
 Layouts the integration sends always include `icon`. Layouts saved before page
 icons existed load with `icon: ""`.
+
+Light tile options. `tap` is what a tap on the tile does: `"toggle"` (default)
+turns the light on or off, `"controls"` opens its controls (brightness, colour)
+instead, so a stray tap can't switch it. A long press always opens the
+controls. `inline` puts sliders on the tile itself: brightness, and for
+`color` a hue slider and/or a colour temperature slider, whichever the light
+supports. Other kinds must leave both at their defaults. Layouts the
+integration sends always include both; older layouts load with the defaults.
 
 Light tile icons. A tile's `icon` is `""` (the default bulb, outline when off)
 or, on `light` tiles only, exactly one of these names. The tile's colour shows
@@ -208,7 +218,11 @@ All keys are always present, so the firmware can parse a fixed struct.
   "humidity": 45,        // climate humidity in whole percent; null when unknown or not climate
   "position": 40,        // cover/valve position 0-100; -1 when not reported or not a cover/valve
   "volume": 30,          // media player volume 0-100; -1 when not settable or not a media player
-  "code_required": false // lock/alarm takes a code (show a keypad); false otherwise
+  "code_required": false, // lock/alarm takes a code (show a keypad); false otherwise
+  "hue": 30,             // light hue 0-359 when it takes colours (0 if unknown); -1 otherwise
+  "rgb": "#ffb070",      // light's current colour while on, when HA reports one; "" otherwise
+  "kelvin": 2700,        // light colour temperature when it takes one (0 if unknown); -1 otherwise
+  "kelvin_min": 2000, "kelvin_max": 6500   // its range; -1 otherwise
 }
 ```
 
@@ -281,7 +295,7 @@ Details:
 
 | kind | actions |
 |---|---|
-| light | `toggle`, `brightness` (value 0-100; 0 turns off) |
+| light | `toggle`, `brightness` (value 0-100; 0 turns off), `hue` (value 0-360: full saturation), `kelvin` (value inside `kelvin_min`-`kelvin_max`) |
 | gate, garage | `toggle` (cover: stop if moving, else close if open, else open; switch: toggle; button: press), `open`, `close`, `stop` |
 | valve | `toggle` (valve: as for covers), `open`, `close` |
 | climate | `toggle` (off ⇄ last non-off mode, else first non-off mode), `set_temperature` (value number), `set_mode` (value string) |
@@ -298,7 +312,10 @@ An action not listed for the tile's kind is `invalid_action`.
 How actions map to entities:
 
 - `switch`: `open` turns it on, `close` turns it off; on a light tile `brightness`
-  above 0 turns it on, 0 turns it off. `stop` is `invalid_action`.
+  above 0 turns it on, 0 turns it off. `stop`, `hue` and `kelvin` are
+  `invalid_action`.
+- `light`: `hue` and `kelvin` turn the light on with `hs_color [hue, 100]` or
+  `color_temp_kelvin`.
 - `button`: `toggle`, `open` and `close` all press it; `stop` is `invalid_action`.
 - `cover`/`valve` that cannot stop: `toggle` while moving reverses direction, and
   `stop` is `invalid_action`.

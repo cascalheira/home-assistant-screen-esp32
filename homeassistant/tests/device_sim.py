@@ -164,7 +164,8 @@ class HAWebSocket:
 VM_KEYS = {
     "available", "on", "status", "detail", "moving", "brightness", "current",
     "target", "min", "max", "step", "mode", "modes", "unit", "humidity",
-    "position", "volume", "code_required",
+    "position", "volume", "code_required", "hue", "rgb", "kelvin", "kelvin_min",
+    "kelvin_max",
 }
 
 

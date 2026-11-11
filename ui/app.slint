@@ -164,8 +164,13 @@ export component AppWindow inherits Window {
     // ---- Dimmer pop-up
     in-out property <bool> dimmer-open;
     in property <string> dimmer-name;
-    in-out property <int> dimmer-value;
+    in property <int> dimmer-value;
     in property <bool> dimmer-on;
+    in property <int> dimmer-hue: -1;
+    in property <int> dimmer-kelvin;
+    in property <int> dimmer-kelvin-min: -1;
+    in property <int> dimmer-kelvin-max;
+    in property <color> dimmer-tint: #f5b83d;
 
     // ---- Action sheet (blinds, locks, alarm, media)
     in-out property <bool> sheet-open;
@@ -248,10 +253,13 @@ export component AppWindow inherits Window {
     callback page-selected(int);
     callback tile-tapped(string);
     callback tile-long-pressed(string);
+    callback tile-adjust(string, string, int); // tile id, "brightness" | "hue" | "kelvin", value
     callback dash-message-action();
     callback climate-step(int);
     callback climate-set-mode(string);
     callback dimmer-commit(int);
+    callback dimmer-hue-commit(int);
+    callback dimmer-kelvin-commit(int);
     callback sheet-action(string);
     callback sheet-slider-commit(int);
     callback sheet-key(string);
@@ -707,6 +715,7 @@ export component AppWindow inherits Window {
                     tile: t;
                     tapped => { root.tile-tapped(t.id); }
                     long-pressed => { root.tile-long-pressed(t.id); }
+                    adjust(what, v) => { root.tile-adjust(t.id, what, v); }
                 }
             }
             if root.dash-message-title != "": VerticalLayout {
@@ -806,8 +815,15 @@ export component AppWindow inherits Window {
         }
         if root.dimmer-open: DimmerSheet {
             title: root.dimmer-name;
-            value <=> root.dimmer-value;
+            value: root.dimmer-value;
             is-on: root.dimmer-on;
+            hue: root.dimmer-hue;
+            kelvin: root.dimmer-kelvin;
+            kelvin-min: root.dimmer-kelvin-min;
+            kelvin-max: root.dimmer-kelvin-max;
+            tint: root.dimmer-tint;
+            hue-commit(v) => { root.dimmer-hue-commit(v); }
+            kelvin-commit(v) => { root.dimmer-kelvin-commit(v); }
             close => { root.dimmer-open = false; }
             commit(v) => { root.dimmer-commit(v); }
             toggle => { root.dimmer-toggle(); }
