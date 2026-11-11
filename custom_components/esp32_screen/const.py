@@ -110,7 +110,7 @@ LIGHT_ICONS: Final[tuple[str, ...]] = (
 )
 
 # Light tile options (docs/protocol.md, section 2). The first is the default.
-LIGHT_TAP: Final = ("toggle", "controls")
+LIGHT_TAP: Final = ("toggle", "controls", "no_toggle")
 LIGHT_INLINE: Final = ("", "brightness", "color", "brightness_color")
 
 # Optional sensor fields of a tile; only climate tiles may set them.

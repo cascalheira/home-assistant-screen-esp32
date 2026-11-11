@@ -55,7 +55,7 @@ The firmware stores the HA base URL and the refresh token in NVS, never the pass
           "temperature_entity": "",  // climate only: "" or a sensor.* entity id
           "humidity_entity": "",     // climate only: "" or a sensor.* entity id
           "icon": "",                // light only: "" (the bulb) or one of the light icons below
-          "tap": "toggle",           // light only: "toggle" | "controls" (open the light's controls)
+          "tap": "toggle",           // light only: "toggle" | "controls" | "no_toggle"
           "inline": ""               // light only: "" | "brightness" | "color" | "brightness_color"
         }
       ]
@@ -109,8 +109,10 @@ icons existed load with `icon: ""`.
 
 Light tile options. `tap` is what a tap on the tile does: `"toggle"` (default)
 turns the light on or off, `"controls"` opens its controls (brightness, colour)
-instead, so a stray tap can't switch it. A long press always opens the
-controls. `inline` puts sliders on the tile itself: brightness, and for
+instead, so a stray tap can't switch it. `"no_toggle"` is for lights on a
+wall switch: a tap opens the controls, which have no on/off button, and the
+screen never turns the light on or off (brightness bottoms out at 1%). A long
+press always opens the controls. `inline` puts sliders on the tile itself: brightness, and for
 `color` a hue slider and/or a colour temperature slider, whichever the light
 supports. Other kinds must leave both at their defaults. Layouts the
 integration sends always include both; older layouts load with the defaults.

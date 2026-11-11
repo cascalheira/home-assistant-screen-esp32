@@ -1901,6 +1901,7 @@ impl Shared {
         if let Some((tile, state)) = dimmer_id.and_then(|id| self.find_tile(&id)) {
             ui.set_dimmer_name(tile.label.as_str().into());
             ui.set_dimmer_on(state.on);
+            ui.set_dimmer_can_toggle(!tile.no_toggle());
             // The sliders keep their own value while touched.
             ui.set_dimmer_value(state.brightness);
             ui.set_dimmer_hue(state.hue);

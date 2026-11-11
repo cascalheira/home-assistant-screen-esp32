@@ -36,7 +36,8 @@ pub struct Tile {
     /// Light tiles: "" (the bulb) or an `mdi:` name from `icons::LIGHT_ICONS`.
     pub icon: String,
     /// Light tiles: "toggle" (or "") turns the light on/off on a tap,
-    /// "controls" opens its controls instead.
+    /// "controls" opens its controls instead, "no_toggle" too and the
+    /// screen never switches the light (it is on a wall switch).
     pub tap: String,
     /// Light tiles: sliders on the tile: "", "brightness", "color" or
     /// "brightness_color".
@@ -46,7 +47,12 @@ pub struct Tile {
 impl Tile {
     /// A tap opens the controls rather than toggling.
     pub fn tap_opens_controls(&self) -> bool {
-        self.kind == "light" && self.tap == "controls"
+        self.kind == "light" && (self.tap == "controls" || self.tap == "no_toggle")
+    }
+
+    /// The screen offers no way to turn this light on or off.
+    pub fn no_toggle(&self) -> bool {
+        self.kind == "light" && self.tap == "no_toggle"
     }
 
     pub fn inline_brightness(&self) -> bool {

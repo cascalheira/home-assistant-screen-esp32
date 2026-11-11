@@ -188,6 +188,8 @@ export component LevelSlider inherits Rectangle {
     in property <string> style: "brightness"; // brightness | hue | kelvin
     in property <color> fill: #f5b83d;
     in property <bool> enabled: true;
+    // Brightness: the percentage on the bar.
+    in property <bool> show-value: false;
     // The value shown, and whether it is the finger's rather than HA's.
     out property <int> shown: ta.pressed || root.holding ? root.local : root.value;
     out property <bool> active: ta.pressed || root.holding;
@@ -197,6 +199,9 @@ export component LevelSlider inherits Rectangle {
 
     property <int> local;
     property <bool> holding: false;
+    // Half the height in whole pixels: a gradient starting between pixels
+    // shows seams in the software renderer.
+    property <length> cap: Math.floor(root.height / 2 / 1px) * 1px;
     property <float> frac: Math.clamp((root.shown - root.minimum) / Math.max(1, root.maximum - root.minimum), 0, 1);
 
     border-radius: self.height / 2;
@@ -218,8 +223,8 @@ export component LevelSlider inherits Rectangle {
             background: #ff0000;
         }
         Rectangle {
-            x: root.height / 2;
-            width: root.width - root.height;
+            x: root.cap;
+            width: root.width - 2 * root.cap;
             background: @linear-gradient(90deg, #ff0000 0%, #ffff00 17%, #00ff00 33%, #00ffff 50%, #0000ff 67%, #ff00ff 83%, #ff0000 100%);
         }
     }
@@ -237,8 +242,8 @@ export component LevelSlider inherits Rectangle {
             background: #dbe7ff;
         }
         Rectangle {
-            x: root.height / 2;
-            width: root.width - root.height;
+            x: root.cap;
+            width: root.width - 2 * root.cap;
             background: @linear-gradient(90deg, #ff9d42 0%, #ffd2a1 40%, #fff4e8 65%, #dbe7ff 100%);
         }
     }
@@ -247,6 +252,15 @@ export component LevelSlider inherits Rectangle {
         width: Math.max(root.height, root.width * root.frac);
         border-radius: root.height / 2;
         background: root.fill;
+    }
+    if root.show-value && root.style == "brightness": Text {
+        x: 14px;
+        text: root.shown >= root.minimum ? root.shown + "%" : "Off";
+        font-size: 15px;
+        font-weight: 600;
+        // Dark on the (bright) fill, the usual text colour on the track.
+        color: root.width * root.frac >= 64px ? #151a23 : Theme.text;
+        vertical-alignment: center;
     }
     if root.style != "brightness": Rectangle {
         x: (root.width - root.height) * root.frac;
@@ -496,7 +510,8 @@ export component TileView inherits Rectangle {
         alignment: end;
         if root.tile.ctl-brightness: LevelSlider {
             min-height: 16px;
-            preferred-height: 30px;
+            preferred-height: 40px;
+            show-value: true;
             enabled: root.tile.available;
             minimum: 1;
             value: root.tile.on ? root.tile.brightness : 0;
@@ -702,6 +717,8 @@ export component ClimateSheet inherits Sheet {
 export component DimmerSheet inherits Sheet {
     in property <int> value; // brightness 0-100; -1 when not dimmable
     in property <bool> is-on;
+    // False for lights on a wall switch: no Turn on/off button.
+    in property <bool> can-toggle: true;
     in property <int> hue: -1; // -1 when the light takes no colour
     in property <int> kelvin;
     in property <int> kelvin-min: -1; // -1 when it has no colour temperature
@@ -732,7 +749,7 @@ export component DimmerSheet inherits Sheet {
                 vertical-alignment: center;
             }
             Rectangle { horizontal-stretch: 1; }
-            VerticalLayout {
+            if root.can-toggle: VerticalLayout {
                 alignment: center;
                 Button {
                     text: root.is-on ? "Turn off" : "Turn on";

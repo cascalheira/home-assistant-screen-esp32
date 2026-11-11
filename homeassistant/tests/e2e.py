@@ -740,6 +740,7 @@ async def main() -> int:
             ("tile icon not in the light list", lambda lay: page(lay)["tiles"][0].update(icon="mdi:home"), "icon"),
             ("tile icon on a non-light tile", lambda lay: page(lay)["tiles"][2].update(icon="mdi:coach-lamp"), "light tiles only"),
             ("light tap not allowed", lambda lay: page(lay)["tiles"][0].update(tap="nothing"), "tap must be one of"),
+            ("no_toggle on a non-light tile", lambda lay: page(lay)["tiles"][2].update(tap="no_toggle"), "only allowed on light tiles"),
             ("light inline not allowed", lambda lay: page(lay)["tiles"][0].update(inline="hue"), "inline must be one of"),
             ("inline on a non-light tile", lambda lay: page(lay)["tiles"][2].update(inline="brightness"), "only allowed on light tiles"),
             ("tap on a non-light tile", lambda lay: page(lay)["tiles"][2].update(tap="controls"), "only allowed on light tiles"),

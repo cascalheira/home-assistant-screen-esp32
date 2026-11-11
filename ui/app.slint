@@ -169,6 +169,7 @@ export component AppWindow inherits Window {
     in property <string> dimmer-name;
     in property <int> dimmer-value;
     in property <bool> dimmer-on;
+    in property <bool> dimmer-can-toggle: true;
     in property <int> dimmer-hue: -1;
     in property <int> dimmer-kelvin;
     in property <int> dimmer-kelvin-min: -1;
@@ -862,6 +863,7 @@ export component AppWindow inherits Window {
             title: root.dimmer-name;
             value: root.dimmer-value;
             is-on: root.dimmer-on;
+            can-toggle: root.dimmer-can-toggle;
             hue: root.dimmer-hue;
             kelvin: root.dimmer-kelvin;
             kelvin-min: root.dimmer-kelvin-min;

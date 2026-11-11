@@ -344,8 +344,9 @@ class Esp32ScreenPanel extends HTMLElement {
       view.on = st.state === "on";
       view.status = tile.kind === "valve" ? (view.on ? "Open" : "Closed") : view.on ? "On" : "Off";
       const dimmable = (a.supported_color_modes || []).some((m) => m !== "onoff" && m !== "unknown");
-      if (domain === "light" && dimmable && view.on && a.brightness) {
-        view.detail = `${Math.max(1, Math.round((a.brightness * 100) / 255))}%`;
+      if (domain === "light" && dimmable) {
+        view.brightness = view.on && a.brightness ? Math.max(1, Math.round((a.brightness * 100) / 255)) : 0;
+        if (view.on && a.brightness) view.detail = `${view.brightness}%`;
       }
     } else if (domain === "button") {
       view.status = "Press";
@@ -755,7 +756,7 @@ class Esp32ScreenPanel extends HTMLElement {
               <div class="tile-name">${esc(v.name)}</div>
               ${v.value && t.h >= 2 ? `<div class="tile-value">${esc(v.value)}</div>` : ""}
               <div class="tile-status">${esc(v.status)}${v.detail ? ` · <span class="tile-detail">${esc(v.detail)}</span>` : ""}</div>`}
-              ${t.kind === "light" && t.inline ? `<div class="tile-bars">${t.inline.includes("brightness") ? `<span class="bar bright"></span>` : ""}${t.inline.includes("color") ? `<span class="bar hue"></span>` : ""}</div>` : ""}
+              ${t.kind === "light" && t.inline ? `<div class="tile-bars">${t.inline.includes("brightness") && v.brightness != null ? `<span class="bar bright" style="--level:${v.on ? Math.max(v.brightness, 1) : 0}%"><span class="bar-value">${v.on ? `${v.brightness}%` : "Off"}</span></span>` : ""}${t.inline.includes("color") ? `<span class="bar hue"></span>` : ""}</div>` : ""}
             </div>
             <div class="handle" data-handle="${esc(t.id)}" title="Drag to resize"></div>
           </div>`;
@@ -864,6 +865,7 @@ class Esp32ScreenPanel extends HTMLElement {
           <select data-change="tile-tap">
             ${opt("toggle", "Turns on/off", tile.tap || "toggle")}
             ${opt("controls", "Opens controls", tile.tap || "toggle")}
+            ${opt("no_toggle", "No on/off (physical switch)", tile.tap || "toggle")}
           </select>
         </label>
         <label class="field">On the tile
@@ -876,7 +878,7 @@ class Esp32ScreenPanel extends HTMLElement {
         </label>
       </div>
       ${note}
-      <p class="muted small">A long press always opens the controls. Sliders need room: brightness and colour fit best on tiles 2 wide or 2 high.</p>`;
+      <p class="muted small">A long press always opens the controls. "No on/off" is for lights on a wall switch: the screen only dims them, never turns them on or off. Sliders need room: brightness and colour fit best on tiles 2 wide or 2 high.</p>`;
   }
 
   _tileIconPicker(tile) {
@@ -1544,9 +1546,10 @@ const STYLE = `
   .icon-choice:hover { background: rgba(127,127,127,.15); }
   .icon-choice.active { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
   .icon-choice.none { grid-column: 1 / -1; height: 32px; }
-  .tile-bars { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
-  .tile-bars .bar { display: block; height: 6px; border-radius: 3px; }
-  .tile-bars .bright { background: linear-gradient(90deg, var(--tile-accent) 60%, rgba(127,127,127,.3) 60%); }
+  .tile-bars { display: flex; flex-direction: column; gap: clamp(3px, 4cqh, 8px); margin-top: 6px; flex: none; }
+  .tile-bars .bar { position: relative; display: block; height: clamp(10px, 16cqh, 30px); border-radius: 999px; }
+  .tile-bars .bright { background: linear-gradient(90deg, var(--tile-accent) var(--level), rgba(127,127,127,.3) var(--level)); }
+  .tile-bars .bar-value { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font-size: clamp(9px, 11cqh, 14px); font-weight: 600; color: #fff; text-shadow: 0 0 3px rgba(0,0,0,.6); }
   .tile-bars .hue { background: linear-gradient(90deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00); }
   .small { font-size: 12px; margin: 4px 0 0; }
   .tile-icons { display: grid; grid-template-columns: repeat(auto-fill, minmax(36px, 1fr)); gap: 4px; margin-top: 4px; }
