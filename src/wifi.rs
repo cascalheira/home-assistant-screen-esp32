@@ -22,7 +22,8 @@ use esp_idf_svc::netif::IpEvent;
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault};
 use esp_idf_svc::sys;
 use esp_idf_svc::wifi::{
-    AuthMethod, ClientConfiguration, Configuration, EspWifi, PmfConfiguration, WifiEvent,
+    AuthMethod, ClientConfiguration, Configuration, EspWifi, PmfConfiguration, WifiDeviceId,
+    WifiEvent,
 };
 
 pub use crate::logic::net::wifi_bars as bars;
@@ -173,9 +174,11 @@ pub fn start(
         ..Default::default()
     }))?;
     wifi.start()?;
+    // Ask the Wi-Fi driver: on the ESP32-P4 board Wi-Fi is the ESP32-C6's,
+    // and the network interface only learns its MAC later.
     let mac = wifi
-        .sta_netif()
-        .get_mac()
+        .get_mac(WifiDeviceId::Sta)
+        .or_else(|_| wifi.sta_netif().get_mac())
         .map(|m| {
             m.iter()
                 .map(|b| format!("{b:02X}"))

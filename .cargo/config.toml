@@ -8,10 +8,15 @@ linker = "ldproxy"
 runner = "espflash flash --monitor --baud 230400 --flash-size 16mb --partition-table partitions.csv"
 rustflags = ["--cfg", "espidf_time64"]
 
+[target.riscv32imafc-esp-espidf]
+linker = "ldproxy"
+rustflags = ["--cfg", "espidf_time64"]
+
 [unstable]
 build-std = ["std", "panic_abort"]
 
 [env]
+# scripts/cargo-esp.sh sets MCU (and the target) from BOARD.
 MCU = "esp32s3"
 ESP_IDF_VERSION = "v5.5.3"
 # Reuse the ESP-IDF checkout and tools in ~/.espressif instead of a per-project copy.

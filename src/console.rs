@@ -49,20 +49,43 @@ pub enum ConsoleCommand {
     Page(String),
     /// Show an MJPEG stream as if the doorbell rang (no token is sent).
     Doorbell(String),
+    /// Bring-up aid: drive a GPIO high or low (`gpio N 0|1`).
+    Gpio(i32, bool),
+    /// Bring-up aid (P4 board): the DSI controller's test pattern instead of
+    /// the frame buffer: 0 off, 1 vertical bars, 2 horizontal bars.
+    Pattern(u32),
+    /// Clear LCD image retention: full-screen white and colours for N
+    /// minutes, then restart.
+    PanelRefresh(u32),
     Forget,
 }
 
 /// Starts the console thread.
 pub fn start(tx: Sender<ConsoleCommand>) {
+    // Route stdin through a driver so reads block instead of returning
+    // "would block" immediately: UART0 on the S3 board (CH340), the chip's
+    // USB Serial/JTAG on the P4 board.
+    #[cfg(esp32s3)]
     unsafe {
-        // Route stdin through the UART driver so reads block instead of
-        // returning "would block" immediately.
         let err = sys::uart_driver_install(0, 1024, 0, 0, core::ptr::null_mut(), 0);
         if err != sys::ESP_OK {
             log::error!("console: uart_driver_install failed ({err})");
             return;
         }
         sys::uart_vfs_dev_use_driver(0);
+    }
+    #[cfg(esp32p4)]
+    unsafe {
+        let mut config = sys::usb_serial_jtag_driver_config_t {
+            tx_buffer_size: 4096,
+            rx_buffer_size: 1024,
+        };
+        let err = sys::usb_serial_jtag_driver_install(&mut config);
+        if err != sys::ESP_OK {
+            log::error!("console: usb_serial_jtag_driver_install failed ({err})");
+            return;
+        }
+        sys::esp_vfs_usb_serial_jtag_use_driver();
     }
 
     let spawned = thread::Builder::new()
@@ -113,6 +136,23 @@ pub fn start(tx: Sender<ConsoleCommand>) {
                         continue;
                     }
                     "page" => ConsoleCommand::Page(arg.to_string()),
+                    "pattern" => ConsoleCommand::Pattern(arg.trim().parse().unwrap_or(0)),
+                    "panelrefresh" => {
+                        ConsoleCommand::PanelRefresh(arg.trim().parse().unwrap_or(30).clamp(1, 600))
+                    }
+                    "gpio" => {
+                        let mut parts = arg.split_whitespace();
+                        match (
+                            parts.next().and_then(|n| n.parse().ok()),
+                            parts.next().and_then(|v| v.parse::<u8>().ok()),
+                        ) {
+                            (Some(pin), Some(level)) => ConsoleCommand::Gpio(pin, level != 0),
+                            _ => {
+                                println!("usage: gpio N 0|1");
+                                continue;
+                            }
+                        }
+                    }
                     "doorbell" => ConsoleCommand::Doorbell(arg.to_string()),
                     "forget" => ConsoleCommand::Forget,
                     "reboot" => unsafe { sys::esp_restart() },

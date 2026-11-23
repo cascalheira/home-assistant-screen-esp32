@@ -1,0 +1,16 @@
+# Components for the ESP32-P4 board only: Wi-Fi through the ESP32-C6
+# (ESP-Hosted over SDIO, with esp_wifi_remote providing the esp_wifi API) and
+# the JD9165 MIPI-DSI panel driver.
+dependencies:
+  espressif/esp_wifi_remote:
+    version: ">=0.10"
+    rules:
+      - if: "target in [esp32p4]"
+  espressif/esp_hosted:
+    version: "^2"
+    rules:
+      - if: "target in [esp32p4]"
+  espressif/esp_lcd_jd9165:
+    version: "^2.0.2"
+    rules:
+      - if: "target in [esp32p4]"

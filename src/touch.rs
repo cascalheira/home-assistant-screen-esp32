@@ -4,7 +4,7 @@ use std::thread;
 use std::time::Duration;
 
 use esp_idf_svc::hal::delay::TickType;
-use esp_idf_svc::hal::gpio::{Output, OutputPin, PinDriver};
+use esp_idf_svc::hal::gpio::{AnyOutputPin, Output, PinDriver};
 use esp_idf_svc::hal::i2c::I2cDriver;
 use esp_idf_svc::sys::EspError;
 
@@ -26,30 +26,34 @@ pub struct Touch {
     addr: u8,
     max_x: u32,
     max_y: u32,
-    _reset: PinDriver<'static, Output>,
+    _reset: Option<PinDriver<'static, Output>>,
     filter: TouchFilter,
 }
 
 impl Touch {
-    /// Resets the controller (selecting I2C address 0x5D) and probes it.
+    /// Resets the controller through `(int, reset)` when they are wired
+    /// (selecting I2C address 0x5D), then probes it at 0x5D and 0x14.
     pub fn new(
         i2c: I2cDriver<'static>,
-        int_pin: impl OutputPin + 'static,
-        reset_pin: impl OutputPin + 'static,
+        reset_pins: Option<(AnyOutputPin<'static>, AnyOutputPin<'static>)>,
     ) -> Result<Self, EspError> {
-        let mut reset = PinDriver::output(reset_pin)?;
-        {
-            // INT held low while RST rises selects address 0x5D. Afterwards
-            // INT is released (the driver is dropped and the pin floats) so
-            // the controller can drive it.
-            let mut int = PinDriver::output(int_pin)?;
-            int.set_low()?;
-            reset.set_low()?;
-            thread::sleep(Duration::from_millis(10));
-            reset.set_high()?;
-            thread::sleep(Duration::from_millis(10));
+        let mut reset = None;
+        if let Some((int_pin, reset_pin)) = reset_pins {
+            let mut rst = PinDriver::output(reset_pin)?;
+            {
+                // INT held low while RST rises selects address 0x5D.
+                // Afterwards INT is released (the driver is dropped and the
+                // pin floats) so the controller can drive it.
+                let mut int = PinDriver::output(int_pin)?;
+                int.set_low()?;
+                rst.set_low()?;
+                thread::sleep(Duration::from_millis(10));
+                rst.set_high()?;
+                thread::sleep(Duration::from_millis(10));
+            }
+            thread::sleep(Duration::from_millis(60));
+            reset = Some(rst);
         }
-        thread::sleep(Duration::from_millis(60));
 
         let mut touch = Self {
             i2c,

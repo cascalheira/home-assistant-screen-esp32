@@ -667,6 +667,29 @@ class ScreenManager:
             sub.send_full()
         self._notify()
 
+    async def async_copy_screen(self, screen_id: str, from_screen_id: str) -> bool:
+        """Give a screen another screen's layout and settings (its name stays).
+
+        Returns False when the source is unknown. The target is created if
+        HA hasn't seen it yet, as when saving a layout for it.
+        """
+        source = self.screens.get(from_screen_id)
+        if source is None:
+            return False
+        record = self.screens.get(screen_id)
+        if record is None:
+            record = ScreenRecord(screen_id=screen_id, name=default_name(screen_id))
+            self.screens[screen_id] = record
+            self._update_device(record)
+        record.layout = copy.deepcopy(source.layout)
+        record.settings = copy.deepcopy(source.settings)
+        await self.async_save_now()
+        self.doorbells.async_track()
+        for sub in list(self._subscriptions.get(screen_id, ())):
+            sub.send_full()
+        self._notify()
+        return True
+
     async def async_update_settings(self, screen_id: str, changes: dict[str, Any]) -> bool:
         """Change a screen's settings. Returns False when unknown."""
         if (record := self.screens.get(screen_id)) is None:

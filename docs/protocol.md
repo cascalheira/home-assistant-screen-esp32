@@ -338,6 +338,7 @@ Result: `null` on success. Errors use HA's standard error result with codes
 | `esp32_screen/screens` | — | `{"screens":[{"screen_id","name","model","sw_version","online","last_seen","layout","settings"}]}` (`last_seen` ISO 8601 or null) |
 | `esp32_screen/layout/save` | `screen_id`, `layout` | `null`; error `invalid_layout` with a readable message |
 | `esp32_screen/screen/update` | `screen_id`, optional `name`, optional `settings` (section 7) | `null`; `not_found` for unknown screens |
+| `esp32_screen/screen/copy` | `screen_id`, `from_screen_id` | `null`. Gives `screen_id` (created if new) a copy of the other screen's layout and settings; its name stays. `not_found` for an unknown source, `invalid_format` when both are the same |
 | `esp32_screen/screen/remove` | `screen_id` | `null`; `not_found` for unknown screens |
 | `esp32_screen/subscribe_screens` | — | `null`, then an event `{"screens":[...]}` right away and again whenever any screen record or online state changes |
 

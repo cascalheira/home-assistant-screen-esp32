@@ -1,7 +1,12 @@
 # esp32-screen
 
-Rust firmware for an ESP32-S3 800x480 touch screen (Sunton ESP32-8048S043 class:
-N16R8 module, parallel RGB panel, GT911 touch, SD slot).
+Rust firmware for two ESP32 touch screens, picked at build time with `BOARD`:
+
+- `s3` (default): ESP32-S3 800x480 screen (Sunton ESP32-8048S043 class: N16R8
+  module, parallel RGB panel, GT911 touch, SD slot over SPI).
+- `p4`: Guition JC1060P470C, an ESP32-P4 with a 7" 1024x600 MIPI-DSI panel
+  (JD9165), GT911 touch, 32 MB PSRAM, an ESP32-C6 for Wi-Fi (ESP-Hosted over
+  SDIO) and an SD slot on SDMMC. The UI is drawn 1.25x larger.
 
 On boot it shows a two-step setup wizard, then a dashboard designed in Home
 Assistant.
@@ -102,10 +107,13 @@ also removes the PIN).
 ## Build and flash
 
 Requires the Xtensa Rust toolchain (`espup install`), `ldproxy` and `espflash`.
-ESP-IDF v5.5.3 is fetched into `~/.espressif` on the first build.
+ESP-IDF is fetched into `~/.espressif` on the first build: v5.5.3 for the S3
+board, v5.5.6 for the P4 board (5.5.3's MIPI-DSI driver garbles its panel).
 
 ```sh
 scripts/flash.sh                       # build and flash over USB
+BOARD=p4 scripts/flash.sh              # the ESP32-P4 board (its USB port is found by itself)
+BOARD=p4 FIRST_FLASH=1 scripts/flash.sh  # first time over the factory firmware (also erases nvs)
 scripts/build-firmware.sh              # build dist/esp32-screen-<version>.bin
 scripts/build-firmware.sh --publish homeassistant/dev-config/esp32_screen/firmware
 scripts/test-host.sh                   # host tests, with standard Rust
@@ -157,7 +165,9 @@ Development builds (the default `dev-console` feature) read commands on the
 serial port: `tap X Y [MS]`, `type TEXT`, `key enter`, `key back`, `shot`,
 `status`, `sd`, `sdformat ERASE`, `sdcopyslot`, `saver`, `bench`,
 `flipshot MS`, `page NAME`, `doorbell URL` (shows any MJPEG stream as if the
-doorbell rang), `forget`, `reboot`. `src/console.rs` describes
+doorbell rang), `forget`, `reboot`, and for bringing up a board: `gpio N 0|1`,
+`pattern N` (P4: the DSI controller's test bars, 0 = off) and `panelrefresh MIN`
+(full-screen white and colours to clear LCD image retention, then restart). `src/console.rs` describes
 each one. Logging pauses while `shot` sends a screenshot, so events during
 those few seconds don't show in the log. Release images leave the console out, so anyone with a USB cable
 can't drive the screen.
@@ -218,6 +228,10 @@ several or all screens. It can include a camera snapshot or an image entity,
 and can stay up for a number of seconds or until it is dismissed with
 `esp32_screen.dismiss`. For example, a doorbell automation can send the
 camera picture with a 60 s timeout.
+
+**Copying a screen.** **Copy from…** next to Save gives the selected screen
+another screen's layout and screen settings (its name stays), for example to
+set up a second screen like the first.
 
 **Doorbell.** Under **Screen settings › Doorbell**, pick what rings (an
 `event.*` such as a doorbell's ring event, or a `binary_sensor.*`), the camera,

@@ -1,36 +1,63 @@
-//! microSD card on SPI2 (CS=10, MOSI=11, SCK=12, MISO=13), mounted as FAT at
-//! `/sdcard`. Once mounted it is used through `std::fs`.
+//! microSD card, mounted as FAT at `/sdcard` and used through `std::fs`:
+//! - S3 board: SPI2 (CS=10, MOSI=11, SCK=12, MISO=13);
+//! - P4 board: SDMMC slot 0, 4-bit (see components/board_p4/board_p4.c).
 //!
 //! The card is probed once at boot; a card inserted later needs a restart.
 
 use std::ffi::CString;
 
 use anyhow::Result;
-use esp_idf_svc::fs::fatfs::Fatfs;
-use esp_idf_svc::hal::gpio::{AnyIOPin, InputPin, OutputPin};
-use esp_idf_svc::hal::sd::{spi::SdSpiHostDriver, SdCardConfiguration, SdCardDriver};
-use esp_idf_svc::hal::spi::{config::DriverConfig, Dma, SpiAnyPins, SpiDriver};
-use esp_idf_svc::io::vfs::MountedFatfs;
 use esp_idf_svc::sys;
 
 pub const MOUNT_POINT: &str = "/sdcard";
 
-type Card = SdCardDriver<SdSpiHostDriver<'static, SpiDriver<'static>>>;
+#[cfg(esp32s3)]
+type Card = esp_idf_svc::hal::sd::SdCardDriver<
+    esp_idf_svc::hal::sd::spi::SdSpiHostDriver<'static, esp_idf_svc::hal::spi::SpiDriver<'static>>,
+>;
 
 pub struct SdCard {
-    _mounted: MountedFatfs<Fatfs<Card>>,
+    #[cfg(esp32s3)]
+    _mounted: esp_idf_svc::io::vfs::MountedFatfs<esp_idf_svc::fs::fatfs::Fatfs<Card>>,
 }
 
 impl SdCard {
-    /// Initializes the card and mounts it. Fails when no card is inserted
-    /// or it isn't FAT formatted.
+    /// P4 board: mounts the card on SDMMC slot 0. Fails when no card is
+    /// inserted or it isn't FAT formatted.
+    #[cfg(esp32p4)]
+    pub fn mount_sdmmc() -> Result<Self> {
+        let path = CString::new(MOUNT_POINT)?;
+        sys::esp!(unsafe { sys::board_p4::board_p4_sd_mount(path.as_ptr(), 4) })?;
+        let card = Self {};
+        card.log_mounted();
+        Ok(card)
+    }
+
+    fn log_mounted(&self) {
+        if let Some((total, free)) = self.usage() {
+            log::info!(
+                "SD card mounted at {MOUNT_POINT}: {} total, {} free",
+                size(total),
+                size(free)
+            );
+        }
+    }
+
+    /// S3 board: initializes the card on SPI and mounts it. Fails when no
+    /// card is inserted or it isn't FAT formatted.
+    #[cfg(esp32s3)]
     pub fn mount(
-        spi: impl SpiAnyPins + 'static,
-        sck: impl OutputPin + 'static,
-        mosi: impl OutputPin + 'static,
-        miso: impl InputPin + 'static,
-        cs: impl OutputPin + 'static,
+        spi: impl esp_idf_svc::hal::spi::SpiAnyPins + 'static,
+        sck: impl esp_idf_svc::hal::gpio::OutputPin + 'static,
+        mosi: impl esp_idf_svc::hal::gpio::OutputPin + 'static,
+        miso: impl esp_idf_svc::hal::gpio::InputPin + 'static,
+        cs: impl esp_idf_svc::hal::gpio::OutputPin + 'static,
     ) -> Result<Self> {
+        use esp_idf_svc::fs::fatfs::Fatfs;
+        use esp_idf_svc::hal::gpio::AnyIOPin;
+        use esp_idf_svc::hal::sd::{spi::SdSpiHostDriver, SdCardConfiguration, SdCardDriver};
+        use esp_idf_svc::hal::spi::{config::DriverConfig, Dma, SpiDriver};
+        use esp_idf_svc::io::vfs::MountedFatfs;
         let spi = SpiDriver::new(
             spi,
             sck,
@@ -49,13 +76,7 @@ impl SdCard {
         let card = SdCardDriver::new_spi(host, &SdCardConfiguration::new())?;
         let mounted = MountedFatfs::mount(Fatfs::new_sdcard(0, card)?, MOUNT_POINT, 4)?;
         let card = Self { _mounted: mounted };
-        if let Some((total, free)) = card.usage() {
-            log::info!(
-                "SD card mounted at {MOUNT_POINT}: {} total, {} free",
-                size(total),
-                size(free)
-            );
-        }
+        card.log_mounted();
         Ok(card)
     }
 

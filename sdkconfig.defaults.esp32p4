@@ -1,0 +1,35 @@
+# ESP32-P4 board (JD9165 1024x600 MIPI-DSI panel, GT911 touch, ESP32-C6 for
+# Wi-Fi over SDIO): added to sdkconfig.defaults by scripts/cargo-esp.sh when
+# BOARD=p4.
+
+# ---- Chip: revision 3.x (the board has v3.2) ----
+CONFIG_ESP32P4_SELECTS_REV_LESS_V3=n
+
+# ---- 32 MB hex PSRAM at 200 MHz ----
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_SPEED_200M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=65536
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y
+
+# ---- Console on the chip's USB Serial/JTAG (the board's USB-C port) ----
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# ---- UI on core 1 ----
+CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1=y
+
+# ---- Wi-Fi through the ESP32-C6 (ESP-Hosted over SDIO, slot 1) ----
+# The ESP32-P4 Function EV board preset matches this board's wiring:
+# CLK 18, CMD 19, D0-D3 14-17, C6 reset 54 (as the factory firmware logged).
+CONFIG_ESP_HOSTED_ENABLED=y
+CONFIG_ESP_HOSTED_CP_TARGET_ESP32C6=y
+CONFIG_ESP_HOSTED_P4_DEV_BOARD_FUNC_BOARD=y
+CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE=y
+
+# ---- Bootloader ----
+# ESP-IDF 5.5.6's bootloader is just over the 24 KB that fit before the
+# partition table (0x2000-0x8000 on the P4); fewer log strings bring it back.
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y

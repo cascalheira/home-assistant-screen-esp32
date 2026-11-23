@@ -1,4 +1,4 @@
-//! 800x480 RGB panel driven by ESP-IDF's `esp_lcd` RGB driver.
+//! ESP32-S3 board: 800x480 RGB panel driven by ESP-IDF's `esp_lcd` RGB driver.
 //!
 //! Double buffered: Slint renders into a back buffer while the panel shows
 //! the front one; [`Display::present`] hands the back buffer to the driver,
@@ -10,22 +10,14 @@
 
 use core::ffi::c_void;
 use core::ptr;
-use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use core::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use esp_idf_svc::hal::ledc::{LedcDriver, LedcTimerDriver};
 use esp_idf_svc::sys::{self, esp, EspError};
 use slint::platform::software_renderer::Rgb565Pixel;
 
+use super::{FRAMES_STARTED, FRONT_BUFFER, SWAP_TIMEOUTS};
 use crate::board::*;
-
-/// Incremented by the driver's ISR each time it starts reading a frame
-/// buffer from the top, i.e. when a requested buffer switch has happened.
-static FRAMES_STARTED: AtomicU32 = AtomicU32::new(0);
-/// Address of the buffer on screen, for the console's screenshots.
-static FRONT_BUFFER: AtomicUsize = AtomicUsize::new(0);
-/// Swaps that gave up waiting for the panel (should stay 0).
-static SWAP_TIMEOUTS: AtomicU32 = AtomicU32::new(0);
 
 /// Runs in the LCD ISR, so it must live in IRAM (CONFIG_LCD_RGB_ISR_IRAM_SAFE).
 #[link_section = ".iram1.esp32_screen_frame_done"]
@@ -160,72 +152,5 @@ impl Display {
         }
         FRONT_BUFFER.store(buffer as usize, Ordering::Relaxed);
         self.back ^= 1;
-    }
-}
-
-/// (frames started, swap timeouts), for the debug console.
-pub fn frame_stats() -> (u32, u32) {
-    (
-        FRAMES_STARTED.load(Ordering::Relaxed),
-        SWAP_TIMEOUTS.load(Ordering::Relaxed),
-    )
-}
-
-/// Feeds Slint's line-by-line renderer: each line is drawn into a small
-/// buffer in internal RAM and then copied to the back buffer in PSRAM.
-/// Blending directly in PSRAM is several times slower.
-pub struct LineWriter<'a> {
-    pub target: &'a mut [Rgb565Pixel],
-    pub line: &'a mut [Rgb565Pixel],
-}
-
-impl slint::platform::software_renderer::LineBufferProvider for LineWriter<'_> {
-    type TargetPixel = Rgb565Pixel;
-
-    fn process_line(
-        &mut self,
-        line: usize,
-        range: core::ops::Range<usize>,
-        render_fn: impl FnOnce(&mut [Rgb565Pixel]),
-    ) {
-        let start = line * LCD_H_RES;
-        // No need to read the old pixels first: the line renderer fills the
-        // range with the window background before drawing.
-        render_fn(&mut self.line[range.clone()]);
-        self.target[start + range.start..start + range.end].copy_from_slice(&self.line[range]);
-    }
-}
-
-/// Address of the buffer currently on screen (for screenshots).
-#[cfg_attr(not(feature = "dev-console"), allow(dead_code))]
-pub fn front_buffer_addr() -> usize {
-    FRONT_BUFFER.load(Ordering::Relaxed)
-}
-
-/// PWM-dimmable backlight on GPIO2.
-pub struct Backlight {
-    channel: LedcDriver<'static>,
-    // Kept alive for the channel's sake.
-    _timer: LedcTimerDriver<'static, esp_idf_svc::hal::ledc::LowSpeed>,
-}
-
-impl Backlight {
-    pub fn new(
-        channel: LedcDriver<'static>,
-        timer: LedcTimerDriver<'static, esp_idf_svc::hal::ledc::LowSpeed>,
-    ) -> Self {
-        Self {
-            channel,
-            _timer: timer,
-        }
-    }
-
-    /// Brightness 0-100 as people pick it (see `logic::backlight`).
-    pub fn set(&mut self, percent: u8) {
-        let max = self.channel.get_max_duty();
-        let duty = max * crate::logic::backlight::duty_permille(percent) / 1000;
-        if let Err(e) = self.channel.set_duty(duty) {
-            log::warn!("backlight: {e}");
-        }
     }
 }

@@ -1,5 +1,6 @@
 #![allow(unexpected_cfgs)] // cfgs used inside esp_idf_svc::sys::esp_app_desc!
-//! Firmware for an ESP32-S3 800x480 touch screen.
+//! Firmware for an ESP32 touch screen: the ESP32-S3 800x480 board or the
+//! ESP32-P4 1024x600 board (see `board`).
 //!
 //! On boot it shows a setup wizard: with no stored Wi-Fi credentials it
 //! starts at the welcome page; with stored credentials it shows the
@@ -27,20 +28,15 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
-use esp_idf_svc::hal::gpio::{PinDriver, Pull};
-use esp_idf_svc::hal::i2c::{I2cConfig, I2cDriver};
-use esp_idf_svc::hal::ledc::{config::TimerConfig, LedcDriver, LedcTimerDriver, Resolution};
 use esp_idf_svc::hal::peripherals::Peripherals;
-use esp_idf_svc::hal::units::FromValueType;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType, Rgb565Pixel};
 use slint::platform::{PointerEventButton, WindowAdapter, WindowEvent};
 use slint::{ComponentHandle, LogicalPosition, PhysicalSize};
 
-use board::{LCD_H_RES, LCD_V_RES};
+use board::{LCD_H_RES, LCD_V_RES, UI_SCALE};
 use console::ConsoleCommand;
-use display::{Backlight, Display};
-use touch::{Sample, Touch};
+use touch::Sample;
 
 slint::include_modules!();
 
@@ -86,57 +82,15 @@ fn main() -> anyhow::Result<()> {
     let sysloop = EspSystemEventLoop::take()?;
     let nvs = EspDefaultNvsPartition::take()?;
 
-    // Backlight stays off until the first frame is on the panel.
-    let timer = LedcTimerDriver::new(
-        p.ledc.timer0,
-        &TimerConfig::new()
-            .frequency(5.kHz().into())
-            .resolution(Resolution::Bits10),
-    )?;
-    let channel = LedcDriver::new(p.ledc.channel0, &timer, p.pins.gpio2)?;
-    let mut backlight = Backlight::new(channel, timer);
-    backlight.set(0);
+    let board::Hardware {
+        mut display,
+        mut backlight,
+        mut touch,
+        boot_button,
+        sd_card,
+        modem,
+    } = board::init(p)?;
 
-    // The panel's interrupt (which copies every frame from PSRAM into the
-    // bounce buffers) runs on the core that creates the panel. Create it on
-    // core 0, next to Wi-Fi, while this UI task runs on core 1
-    // (CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1).
-    let mut display = {
-        use esp_idf_svc::hal::cpu::Core;
-        use esp_idf_svc::hal::task::thread::ThreadSpawnConfiguration;
-        ThreadSpawnConfiguration {
-            name: Some(c"lcd-init"),
-            pin_to_core: Some(Core::Core0),
-            ..Default::default()
-        }
-        .set()?;
-        let created = thread::spawn(Display::new).join();
-        ThreadSpawnConfiguration::default().set()?;
-        created.map_err(|_| anyhow::anyhow!("display init thread panicked"))??
-    };
-
-    let i2c = I2cDriver::new(
-        p.i2c0,
-        p.pins.gpio19,
-        p.pins.gpio20,
-        &I2cConfig::new().baudrate(400.kHz().into()),
-    )?;
-    let mut touch = Touch::new(i2c, p.pins.gpio18, p.pins.gpio38)?;
-    let boot_button = PinDriver::input(p.pins.gpio0, Pull::Up)?;
-
-    let sd_card = match sd::SdCard::mount(
-        p.spi2,
-        p.pins.gpio12,
-        p.pins.gpio11,
-        p.pins.gpio13,
-        p.pins.gpio10,
-    ) {
-        Ok(card) => Some(card),
-        Err(e) => {
-            log::info!("no SD card: {e:#}");
-            None
-        }
-    };
     let sd_status = match sd_card.as_ref().and_then(|c| c.usage()) {
         Some((total, free)) => trf(
             "{} free of {}",
@@ -151,6 +105,10 @@ fn main() -> anyhow::Result<()> {
 
     let window = MinimalSoftwareWindow::new(RepaintBufferType::SwappedBuffers);
     window.set_size(PhysicalSize::new(LCD_H_RES as u32, LCD_V_RES as u32));
+    // The UI is laid out for 800x480; larger panels draw it scaled up.
+    window.dispatch_event(WindowEvent::ScaleFactorChanged {
+        scale_factor: UI_SCALE,
+    });
     slint::platform::set_platform(Box::new(EspPlatform {
         window: window.clone(),
         start: Instant::now(),
@@ -158,7 +116,7 @@ fn main() -> anyhow::Result<()> {
     .map_err(|e| anyhow::anyhow!("slint platform: {e:?}"))?;
 
     let ui = AppWindow::new().map_err(|e| anyhow::anyhow!("create UI: {e:?}"))?;
-    let wifi = wifi::start(p.modem, sysloop, nvs.clone())?;
+    let wifi = wifi::start(modem, sysloop, nvs.clone())?;
     let screen_id = wifi.mac.replace(':', "");
     let (update_tx, update_rx) = mpsc::channel();
     let ha = ha::start(nvs.clone(), screen_id, update_tx.clone(), sd_card.is_some())?;
@@ -202,7 +160,8 @@ fn main() -> anyhow::Result<()> {
         // ---- Touch
         match touch.poll() {
             Sample::Pressed { x, y } => {
-                let position = LogicalPosition::new(x as f32, y as f32);
+                // Touch reports panel pixels; the UI works in its own pixels.
+                let position = LogicalPosition::new(x as f32 / UI_SCALE, y as f32 / UI_SCALE);
                 let first = pointer_down.is_none();
                 if first {
                     // Real finger-downs only; useful to tell real taps from
@@ -345,6 +304,49 @@ fn main() -> anyhow::Result<()> {
                     None => println!("SDFORMAT no card mounted"),
                 },
                 ConsoleCommand::Doorbell(url) => app.test_doorbell(url),
+                ConsoleCommand::PanelRefresh(minutes) => {
+                    // Image retention fades fastest under uniform drive:
+                    // mostly white, with short passes of the primaries and
+                    // black so every subpixel is exercised.
+                    println!("panel refresh for {minutes} min, then restart");
+                    backlight.set(100);
+                    let end = Instant::now() + Duration::from_secs(minutes as u64 * 60);
+                    let colours: [(u16, u64); 5] = [
+                        (0xFFFF, 20), // white
+                        (0xF800, 2),  // red
+                        (0x07E0, 2),  // green
+                        (0x001F, 2),  // blue
+                        (0x0000, 2),  // black
+                    ];
+                    'refresh: loop {
+                        for (colour, secs) in colours {
+                            display.back_buffer().fill(Rgb565Pixel(colour));
+                            display.present();
+                            let until = Instant::now() + Duration::from_secs(secs);
+                            while Instant::now() < until {
+                                if Instant::now() >= end {
+                                    break 'refresh;
+                                }
+                                thread::sleep(Duration::from_millis(200));
+                            }
+                        }
+                    }
+                    println!("panel refresh done, restarting");
+                    unsafe { esp_idf_svc::sys::esp_restart() };
+                }
+                ConsoleCommand::Pattern(kind) => {
+                    #[cfg(esp32p4)]
+                    display.test_pattern(kind);
+                    #[cfg(not(esp32p4))]
+                    let _ = kind;
+                }
+                ConsoleCommand::Gpio(pin, high) => unsafe {
+                    use esp_idf_svc::sys;
+                    sys::gpio_reset_pin(pin);
+                    sys::gpio_set_direction(pin, sys::gpio_mode_t_GPIO_MODE_OUTPUT);
+                    sys::gpio_set_level(pin, high as u32);
+                    println!("GPIO{pin} = {}", high as u8);
+                },
                 ConsoleCommand::Page(name) => {
                     let page = match name.as_str() {
                         "welcome" => Some(Page::Welcome),

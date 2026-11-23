@@ -48,6 +48,7 @@ def async_register_commands(hass: HomeAssistant) -> None:
         ws_screens,
         ws_save_layout,
         ws_update_screen,
+        ws_copy_screen,
         ws_remove_screen,
         ws_subscribe_screens,
     ):
@@ -381,6 +382,32 @@ async def ws_update_screen(
         await manager.async_rename(screen_id, msg["name"])
     if msg.get("settings"):
         await manager.async_update_settings(screen_id, msg["settings"])
+    connection.send_result(msg["id"])
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "esp32_screen/screen/copy",
+        vol.Required("screen_id"): SCREEN_ID,
+        vol.Required("from_screen_id"): SCREEN_ID,
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_copy_screen(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Copy another screen's layout and settings onto a screen."""
+    if (manager := _manager(hass, connection, msg)) is None:
+        return
+    if msg["screen_id"] == msg["from_screen_id"]:
+        connection.send_error(msg["id"], websocket_api.ERR_INVALID_FORMAT, "A screen can't copy itself")
+        return
+    if not await manager.async_copy_screen(msg["screen_id"], msg["from_screen_id"]):
+        connection.send_error(
+            msg["id"], websocket_api.ERR_NOT_FOUND, f"Unknown screen {msg['from_screen_id']}"
+        )
+        return
     connection.send_result(msg["id"])
 
 

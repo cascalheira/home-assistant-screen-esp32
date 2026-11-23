@@ -219,6 +219,41 @@ class Esp32ScreenPanel extends HTMLElement {
     return this._allScreens().find((s) => s.screen_id === this._sel) || null;
   }
 
+  /** Other screens HA knows, whose layout and settings can be copied here. */
+  _copySources() {
+    return this._screens.filter((s) => s.screen_id !== this._sel);
+  }
+
+  async _copyFrom(sourceId) {
+    const screen = this._screen();
+    const source = this._screens.find((s) => s.screen_id === sourceId);
+    if (!screen || !source) return;
+    const question =
+      `Replace the layout and screen settings of "${screen.name}" with those of "${source.name}"?` +
+      (this._dirty ? "\n\nYour unsaved changes here will be lost." : "");
+    if (!confirm(question)) {
+      this._renderHead();
+      return;
+    }
+    this._saving = true;
+    this._renderHead();
+    try {
+      await this._hass.connection.sendMessagePromise({
+        type: "esp32_screen/screen/copy",
+        screen_id: screen.screen_id,
+        from_screen_id: source.screen_id,
+      });
+      this._error = null;
+      // The screen list update brings the copied layout; load it as saved.
+      this._copiedFrom = source.name;
+    } catch (err) {
+      this._error = err.message || String(err);
+    }
+    this._saving = false;
+    this._renderError();
+    this._renderHead();
+  }
+
   _page() {
     return this._draft?.pages[this._pageIdx] || null;
   }
@@ -235,8 +270,12 @@ class Esp32ScreenPanel extends HTMLElement {
     }
     const server = this._screen();
     const serverJson = JSON.stringify(normLayout(server.layout));
-    if (!this._dirty && serverJson !== this._base) {
-      this._loadScreen(this._sel, true);
+    // After a copy the copied layout replaces the draft, even an edited one
+    // (the user confirmed that).
+    if ((!this._dirty || this._copiedFrom) && serverJson !== this._base) {
+      this._notice = this._copiedFrom ? `Copied from ${this._copiedFrom}` : null;
+      this._copiedFrom = null;
+      this._loadScreen(this._sel);
       this._render();
       return;
     }
@@ -627,6 +666,11 @@ class Esp32ScreenPanel extends HTMLElement {
           ${dirty ? `<span class="unsaved" title="You have unsaved changes"><span class="dot warn"></span>Unsaved changes</span>` : this._notice ? `<span class="muted">${esc(this._notice)}</span>` : ""}
           <button class="btn" data-action="discard" ${dirty ? "" : "disabled"}>Discard</button>
           <button class="btn primary" data-action="save" ${dirty && !this._saving ? "" : "disabled"}>${this._saving ? "Saving..." : "Save"}</button>
+          ${this._copySources().length ? `
+          <select class="copy-from" data-change="copy-from" title="Copy the layout and settings of another screen" ${this._saving ? "disabled" : ""}>
+            <option value="" selected>Copy from…</option>
+            ${this._copySources().map((s) => `<option value="${esc(s.screen_id)}">${esc(s.name)} (${(s.layout?.pages || []).length} page${(s.layout?.pages || []).length === 1 ? "" : "s"})</option>`).join("")}
+          </select>` : ""}
           <button class="icon-btn danger" data-action="remove-screen" title="Remove screen"><ha-icon icon="mdi:delete-outline"></ha-icon></button>
         </div>
       </div>`;
@@ -1170,6 +1214,10 @@ class Esp32ScreenPanel extends HTMLElement {
   _onChange(e) {
     const key = e.target.dataset.change;
     if (!key) return;
+    if (key === "copy-from") {
+      if (e.target.value) this._copyFrom(e.target.value);
+      return;
+    }
     if (key.startsWith("setting-")) {
       const name = key.slice(8);
       const value = name === "clock_24h" ? e.target.checked : name === "doorbell_timeout" ? Number(e.target.value) : e.target.value;
@@ -1456,6 +1504,7 @@ const STYLE = `
   .rename input { font-size: 18px; font-weight: 500; width: 260px; max-width: 60vw; }
   .head-meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 13px; }
   .head-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .copy-from { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--divider-color, #ccc); background: var(--card-background-color, transparent); color: inherit; max-width: 220px; }
   .unsaved { display: inline-flex; gap: 6px; align-items: center; color: var(--warn); font-weight: 500; font-size: 14px; }
   .chip { font-size: 12px; padding: 2px 10px; border-radius: 12px; background: rgba(127,127,127,.15); }
   .chip.online { background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); font-weight: 500; }

@@ -95,8 +95,10 @@ component IconButton inherits Rectangle {
 }
 
 export component AppWindow inherits Window {
-    width: 800px;
-    height: 480px;
+    // Laid out for 800x480 UI pixels; a larger panel (the ESP32-P4 board's
+    // 1024x600 at 1.25x) is a little wider and the layout follows.
+    preferred-width: 800px;
+    preferred-height: 480px;
     background: Theme.bg;
     default-font-family: "Inter";
     default-font-size: 18px;

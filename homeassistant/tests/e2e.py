@@ -306,6 +306,27 @@ async def read_frames(sim: ScreenSim, url: str, count: int, limit: float = 20) -
         return resp.status, resp.headers.get("Content-Type", ""), frames[:count], loop.time() - started
 
 
+async def copy_tests(admin: HAWebSocket, sim: ScreenSim) -> None:
+    """esp32_screen/screen/copy: layout and settings onto another screen."""
+    copy_id = "0A0B0C0D0E0F"
+    await admin.call("esp32_screen/screen/update", screen_id=SIM_ID, settings={"language": "pt", "clock_24h": False})
+    await admin.call("esp32_screen/screen/copy", screen_id=copy_id, from_screen_id=SIM_ID)
+    screens = {s_["screen_id"]: s_ for s_ in (await admin.call("esp32_screen/screens"))["screens"]}
+    src, dst = screens[SIM_ID], screens.get(copy_id)
+    check(dst is not None and dst["layout"] == src["layout"] and dst["settings"] == src["settings"]
+          and dst["name"] != src["name"],
+          "screen/copy: new screen gets the layout and settings, keeps its own name",
+          str(dst and {k: dst[k] for k in ("name", "settings")}))
+    await expect_error(admin.call("esp32_screen/screen/copy", screen_id=copy_id, from_screen_id="FFFFFFFFFFF0"),
+                       "not_found", "screen/copy from an unknown screen -> not_found")
+    await expect_error(admin.call("esp32_screen/screen/copy", screen_id=SIM_ID, from_screen_id=SIM_ID),
+                       "invalid_format", "screen/copy onto itself -> invalid_format")
+    await expect_error(sim.ws.call("esp32_screen/screen/copy", screen_id=copy_id, from_screen_id=SIM_ID),
+                       "unauthorized", "screen/copy: non-admin rejected")
+    await admin.call("esp32_screen/screen/remove", screen_id=copy_id)
+    await admin.call("esp32_screen/screen/update", screen_id=SIM_ID, settings={"language": "en", "clock_24h": True})
+
+
 async def doorbell_tests(admin: HAWebSocket, sim: ScreenSim) -> None:
     """Section 9: doorbell settings, rings, the MJPEG stream and the door action."""
     async def update(**settings: Any) -> Any:
@@ -1196,6 +1217,9 @@ async def main() -> int:
 
         # ---- doorbell (section 9) ------------------------------------------------------------------
         await doorbell_tests(admin, sim)
+
+        # ---- copying a screen's configuration ---------------------------------------------------
+        await copy_tests(admin, sim)
 
         # ---- firmware updates (section 5) -------------------------------------------------------
         await firmware_tests(admin, sim, firmware_dir, session, url)
