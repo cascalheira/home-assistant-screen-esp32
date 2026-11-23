@@ -5,12 +5,12 @@ use std::time::Duration;
 
 use esp_idf_svc::hal::delay::TickType;
 use esp_idf_svc::hal::gpio::{AnyOutputPin, Output, PinDriver};
-use esp_idf_svc::hal::i2c::I2cDriver;
 use esp_idf_svc::sys::EspError;
 
 use crate::board::{LCD_H_RES, LCD_V_RES};
 
 /// Bounded so a wedged bus cannot freeze the UI loop.
+#[cfg_attr(esp32p4, allow(dead_code))]
 const I2C_TIMEOUT: u32 = TickType::new_millis(50).0;
 
 const REG_CONFIG_X_MAX: u16 = 0x8048; // x_lo, x_hi, y_lo, y_hi
@@ -21,8 +21,26 @@ const REG_POINT_1: u16 = 0x8150; // x_lo, x_hi, y_lo, y_hi, size_lo, size_hi
 pub use crate::logic::touch::Sample;
 use crate::logic::touch::TouchFilter;
 
+/// The I2C bus the controller is on: esp-idf-hal's driver, or (ESP32-P4
+/// board) ESP-IDF's newer master driver, which the camera shares.
+pub trait TouchBus {
+    fn write_read(&mut self, addr: u8, bytes: &[u8], buf: &mut [u8]) -> Result<(), EspError>;
+    fn write(&mut self, addr: u8, bytes: &[u8]) -> Result<(), EspError>;
+}
+
+#[cfg(not(esp32p4))]
+impl TouchBus for esp_idf_svc::hal::i2c::I2cDriver<'static> {
+    fn write_read(&mut self, addr: u8, bytes: &[u8], buf: &mut [u8]) -> Result<(), EspError> {
+        esp_idf_svc::hal::i2c::I2cDriver::write_read(self, addr, bytes, buf, I2C_TIMEOUT)
+    }
+
+    fn write(&mut self, addr: u8, bytes: &[u8]) -> Result<(), EspError> {
+        esp_idf_svc::hal::i2c::I2cDriver::write(self, addr, bytes, I2C_TIMEOUT)
+    }
+}
+
 pub struct Touch {
-    i2c: I2cDriver<'static>,
+    i2c: Box<dyn TouchBus>,
     addr: u8,
     max_x: u32,
     max_y: u32,
@@ -34,7 +52,7 @@ impl Touch {
     /// Resets the controller through `(int, reset)` when they are wired
     /// (selecting I2C address 0x5D), then probes it at 0x5D and 0x14.
     pub fn new(
-        i2c: I2cDriver<'static>,
+        i2c: impl TouchBus + 'static,
         reset_pins: Option<(AnyOutputPin<'static>, AnyOutputPin<'static>)>,
     ) -> Result<Self, EspError> {
         let mut reset = None;
@@ -56,7 +74,7 @@ impl Touch {
         }
 
         let mut touch = Self {
-            i2c,
+            i2c: Box::new(i2c),
             addr: 0,
             max_x: LCD_H_RES as u32,
             max_y: LCD_V_RES as u32,
@@ -144,12 +162,11 @@ impl Touch {
     }
 
     fn read_reg(&mut self, reg: u16, buf: &mut [u8]) -> Result<(), EspError> {
-        self.i2c
-            .write_read(self.addr, &reg.to_be_bytes(), buf, I2C_TIMEOUT)
+        self.i2c.write_read(self.addr, &reg.to_be_bytes(), buf)
     }
 
     fn write_reg(&mut self, reg: u16, value: u8) -> Result<(), EspError> {
         let [hi, lo] = reg.to_be_bytes();
-        self.i2c.write(self.addr, &[hi, lo, value], I2C_TIMEOUT)
+        self.i2c.write(self.addr, &[hi, lo, value])
     }
 }

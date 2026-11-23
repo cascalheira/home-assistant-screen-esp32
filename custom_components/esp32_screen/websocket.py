@@ -25,10 +25,15 @@ from .const import (
     SCREENSAVER_ROTATE,
     DOORBELL_TIMEOUT_RANGE,
     LANGUAGES,
+    MAX_ATTENTION_RULES,
+    MAX_LABEL_LEN,
+    MAX_PHOTO_FOLDER_LEN,
 )
+from .attention import needs_condition
 from .doorbell import ACTION_SERVICES, RING_DOMAINS
 from .layout import ENTITY_ID_RE, LayoutError, validate_layout
 from .manager import ActionError, ScreenManager
+from .photos import PhotoFolderError, resolve_photo_folder
 
 SCREEN_ID = vol.All(str, vol.Match(SCREEN_ID_PATTERN, msg="screen_id must be 12 upper-case hex digits"))
 OPTIONAL_TEXT = vol.Any(None, vol.All(str, vol.Length(max=MAX_NAME_LEN)))
@@ -51,6 +56,7 @@ def async_register_commands(hass: HomeAssistant) -> None:
         ws_copy_screen,
         ws_remove_screen,
         ws_subscribe_screens,
+        ws_photos,
     ):
         websocket_api.async_register_command(hass, handler)
 
@@ -342,6 +348,46 @@ def _entity_in(*domains: str) -> Any:
     return validate
 
 
+def _entity_id(value: Any) -> str:
+    if not isinstance(value, str) or not ENTITY_ID_RE.match(value):
+        raise vol.Invalid("must be an entity id")
+    return value
+
+
+def _number_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise vol.Invalid("must be a number or null")
+    return float(value)
+
+
+def _rule_condition(rule: dict[str, Any]) -> dict[str, Any]:
+    if needs_condition(rule["entity_id"]) and not (
+        rule["states"] or rule["below"] is not None or rule["above"] is not None
+    ):
+        raise vol.Invalid(
+            f"{rule['entity_id']}: give the states or a threshold that need attention"
+        )
+    return rule
+
+
+ATTENTION_RULE = vol.All(
+    vol.Schema(
+        {
+            vol.Required("entity_id"): _entity_id,
+            vol.Optional("label", default=""): vol.All(str, vol.Strip, vol.Length(max=MAX_LABEL_LEN)),
+            vol.Optional("states", default=list): vol.All(
+                [vol.All(str, vol.Strip, vol.Length(min=1, max=64))], vol.Length(max=10)
+            ),
+            vol.Optional("below", default=None): _number_or_none,
+            vol.Optional("above", default=None): _number_or_none,
+        }
+    ),
+    _rule_condition,
+)
+
+
 SETTINGS_SCHEMA = vol.Schema(
     {
         vol.Optional("doorbell_entity"): _entity_in(*RING_DOMAINS),
@@ -352,6 +398,9 @@ SETTINGS_SCHEMA = vol.Schema(
         vol.Optional("indoor_temperature_entity"): _entity_of("sensor"),
         vol.Optional("language"): vol.In(LANGUAGES),
         vol.Optional("clock_24h"): bool,
+        # Checked against the media folders in ws_update_screen.
+        vol.Optional("photo_folder"): vol.All(str, vol.Strip, vol.Length(max=MAX_PHOTO_FOLDER_LEN)),
+        vol.Optional("attention"): vol.All([ATTENTION_RULE], vol.Length(max=MAX_ATTENTION_RULES)),
     }
 )
 
@@ -378,6 +427,14 @@ async def ws_update_screen(
             msg["id"], websocket_api.ERR_NOT_FOUND, f"Unknown screen {screen_id}"
         )
         return
+    if (folder := (msg.get("settings") or {}).get("photo_folder")) is not None:
+        try:
+            await hass.async_add_executor_job(
+                resolve_photo_folder, hass.config.media_dirs, folder
+            )
+        except PhotoFolderError as err:
+            connection.send_error(msg["id"], websocket_api.ERR_INVALID_FORMAT, f"photo_folder: {err}")
+            return
     if "name" in msg:
         await manager.async_rename(screen_id, msg["name"])
     if msg.get("settings"):
@@ -450,3 +507,43 @@ def ws_subscribe_screens(
     connection.subscriptions[msg["id"]] = manager.async_add_listener(send)
     connection.send_result(msg["id"])
     send()
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "esp32_screen/photos",
+        vol.Required("screen_id"): SCREEN_ID,
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_photos(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """The screen's photo folder: where it is and how many photos it has."""
+    if (manager := _manager(hass, connection, msg)) is None:
+        return
+    if (record := manager.screens.get(msg["screen_id"])) is None:
+        connection.send_error(
+            msg["id"], websocket_api.ERR_NOT_FOUND, f"Unknown screen {msg['screen_id']}"
+        )
+        return
+    folder = record.settings.get("photo_folder") or ""
+    path = ""
+    try:
+        resolved = await hass.async_add_executor_job(
+            resolve_photo_folder, hass.config.media_dirs, folder
+        )
+        path = str(resolved) if resolved else ""
+    except PhotoFolderError:
+        pass
+    count = await manager.photos.async_count(folder, max_age=0)
+    connection.send_result(
+        msg["id"],
+        {
+            "folder": folder,
+            "path": path,
+            "count": count,
+            "media_dirs": dict(hass.config.media_dirs),
+        },
+    )

@@ -49,16 +49,19 @@ from .const import (
     FORECAST_MIN_INTERVAL,
     FORECAST_REFRESH,
     LANGUAGES,
+    PHOTO_RESCAN,
     SENSOR_FIELDS,
     default_settings,
     STORAGE_KEY,
     STORAGE_VERSION,
 )
+from .attention import attention_items
 from .firmware import FirmwareImage, FirmwareStore
 from .doorbell import Doorbells
 from .forecast import async_forecast
 from .i18n import localize
 from .notifications import NotificationImages
+from .photos import PhotoLibrary
 from .layout import empty_layout, iter_tiles, upgrade_layout
 from .view_model import SUN_ENTITY, info_payload, resolve_label, tile_view_model
 
@@ -152,6 +155,11 @@ class ScreenSubscription:
         self._forecast: dict[str, Any] | None = None
         self._forecast_task: asyncio.Task[None] | None = None
         self._forecast_at: datetime | None = None
+        self._unsub_attention: CALLBACK_TYPE | None = None
+        self._attention: list[dict[str, str]] | None = None
+        self._unsub_photo_timer: CALLBACK_TYPE | None = None
+        self._photo_task: asyncio.Task[None] | None = None
+        self._photos: int | None = None
 
     @callback
     def start(self) -> None:
@@ -180,6 +188,15 @@ class ScreenSubscription:
         if self._forecast_task is not None:
             self._forecast_task.cancel()
             self._forecast_task = None
+        if self._unsub_attention is not None:
+            self._unsub_attention()
+            self._unsub_attention = None
+        if self._unsub_photo_timer is not None:
+            self._unsub_photo_timer()
+            self._unsub_photo_timer = None
+        if self._photo_task is not None:
+            self._photo_task.cancel()
+            self._photo_task = None
 
     @callback
     def send_full(self) -> None:
@@ -232,7 +249,8 @@ class ScreenSubscription:
 
     @callback
     def send_settings(self) -> None:
-        """Send `settings`, `info` and `forecast`, and (re)track the info entities."""
+        """Send `settings`, `info`, `attention`, `forecast` and `photos`, and
+        (re)track the entities behind them."""
         self._stop_info()
         record = self.manager.screens.get(self.screen_id)
         settings = record.settings if record else default_settings()
@@ -257,14 +275,72 @@ class ScreenSubscription:
             self._unsub_info = async_track_state_change_event(
                 self.hass, entities, self._info_changed
             )
+        self._attention = None
+        self.push_attention()
+        rule_entities = sorted(
+            {rule["entity_id"] for rule in settings.get("attention") or [] if rule.get("entity_id")}
+        )
+        if rule_entities:
+            self._unsub_attention = async_track_state_change_event(
+                self.hass, rule_entities, self._attention_changed
+            )
         self._forecast = None
         self._refresh_forecast(force=True)
         self._unsub_forecast_timer = async_track_time_interval(
             self.hass,
-            lambda _now: self._refresh_forecast(force=True),
+            self._forecast_timer,
             timedelta(seconds=FORECAST_REFRESH),
             name="esp32_screen forecast",
         )
+        self._photos = None
+        self._refresh_photos()
+        self._unsub_photo_timer = async_track_time_interval(
+            self.hass,
+            self._photo_timer,
+            timedelta(seconds=PHOTO_RESCAN),
+            name="esp32_screen photos",
+        )
+
+    @callback
+    def _forecast_timer(self, _now: datetime) -> None:
+        self._refresh_forecast(force=True)
+
+    @callback
+    def _attention_changed(self, _event: Event[EventStateChangedData]) -> None:
+        self.push_attention()
+
+    @callback
+    def push_attention(self) -> None:
+        """Send `attention` when its items changed (or were never sent)."""
+        record = self.manager.screens.get(self.screen_id)
+        settings = record.settings if record else default_settings()
+        items = attention_items(
+            self.hass, settings.get("attention") or [], self.manager.language(self.screen_id)
+        )
+        if items != self._attention:
+            self._attention = items
+            self.connection.send_event(self.msg_id, {"kind": "attention", "items": items})
+
+    @callback
+    def _photo_timer(self, _now: datetime) -> None:
+        self._refresh_photos()
+
+    @callback
+    def _refresh_photos(self) -> None:
+        """Scan the photo folder again and send `photos` when the count changed."""
+        if self._photo_task is not None and not self._photo_task.done():
+            return
+        self._photo_task = self.hass.async_create_background_task(
+            self._push_photos(), f"esp32_screen photos {self.screen_id}"
+        )
+
+    async def _push_photos(self) -> None:
+        record = self.manager.screens.get(self.screen_id)
+        settings = record.settings if record else default_settings()
+        count = await self.manager.photos.async_count(settings.get("photo_folder") or "", max_age=0)
+        if count != self._photos:
+            self._photos = count
+            self.connection.send_event(self.msg_id, {"kind": "photos", "count": count})
 
     @callback
     def _info_changed(self, event: Event[EventStateChangedData]) -> None:
@@ -372,6 +448,7 @@ class ScreenManager:
         self.device_states: dict[str, dict[str, Any]] = {}
         self.notification_images = NotificationImages()
         self.doorbells = Doorbells(self)
+        self.photos = PhotoLibrary(hass)
         # Called with a screen_id when its install progress or record changes.
         self._screen_listeners: set[Callable[[str], None]] = set()
 
@@ -490,9 +567,10 @@ class ScreenManager:
             self.device_states[screen_id] = state
             self._notify_screen(screen_id)
             if self.language(screen_id) != before:
-                # Tile texts in the new language.
+                # Tile and attention texts in the new language.
                 for sub in list(self._subscriptions.get(screen_id, ())):
                     sub.send_states()
+                    sub.push_attention()
 
     # ---- firmware updates ----------------------------------------------------
 
@@ -723,6 +801,7 @@ class ScreenManager:
             return False
         for key in [k for k in self._last_hvac_mode if k[0] == screen_id]:
             del self._last_hvac_mode[key]
+        self.photos.forget(screen_id)
         if remove_device:
             registry = dr.async_get(self.hass)
             identifier = (DOMAIN, screen_id)

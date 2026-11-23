@@ -307,12 +307,66 @@ async def main() -> int:
             stored = next(s_ for s_ in screens if s_["screen_id"] == SIM_ID)["settings"]
             check(stored == {"weather_entity": "weather.demo_weather_south", "indoor_temperature_entity": "sensor.living_room_temperature",
                              "language": "pt", "clock_24h": False, "doorbell_entity": "binary_sensor.doorbell",
-                             "doorbell_camera": "camera.front_door", "doorbell_action": "cover.front_gate", "doorbell_timeout": 120},
+                             "doorbell_camera": "camera.front_door", "doorbell_action": "cover.front_gate", "doorbell_timeout": 120,
+                             "photo_folder": "", "attention": []},
                   "screen settings saved from the panel", str(stored))
+
+            async def stored_settings() -> dict[str, Any]:
+                screens = (await ws.call("esp32_screen/screens"))["screens"]
+                return next(s_ for s_ in screens if s_["screen_id"] == SIM_ID)["settings"]
+
+            # Photo frame: the folder and its photo count.
+            folder = settings.locator("input[data-change='setting-photo_folder']")
+            await folder.fill("dev:")
+            await folder.press("Enter")
+            await folder.blur()
+            await page.wait_for_timeout(800)
+            count_text = await settings.locator(".photo-count").inner_text()
+            check((await stored_settings())["photo_folder"] == "dev:" and "/config/media" in count_text,
+                  "photo folder saved from the panel; count and path shown", count_text)
+            await folder.fill("../outside")
+            await folder.blur()
+            await page.wait_for_timeout(800)
+            error = await panel.locator("#error").inner_text()
+            check("photo_folder" in error and (await stored_settings())["photo_folder"] == "dev:",
+                  "a folder outside the media folder is refused", error.strip()[:120])
+            await panel.locator("[data-action='dismiss-error']").click()
+
+            # At a glance: a binary sensor (domain default) and a sensor with a threshold.
+            await settings.locator("[data-action='glance-add']").click()
+            await page.wait_for_timeout(300)
+            await settings.locator("select[data-change='glance-entity']").nth(0).select_option("binary_sensor.movement_backyard")
+            await page.wait_for_timeout(800)
+            check((await stored_settings())["attention"] == [{"entity_id": "binary_sensor.movement_backyard", "label": "", "states": [],
+                                                              "below": None, "above": None}],
+                  "at a glance: a binary sensor rule saves right away", str((await stored_settings())["attention"]))
+            check(await settings.locator(".glance-on").count() == 1, "at a glance: shows whether the rule is active now")
+            await settings.locator("[data-action='glance-add']").click()
+            await page.wait_for_timeout(300)
+            await settings.locator("select[data-change='glance-entity']").nth(1).select_option("sensor.outside_temperature_battery")
+            await page.wait_for_timeout(800)
+            check(len((await stored_settings())["attention"]) == 1 and await settings.locator(".glance-bad").count() == 1,
+                  "at a glance: a sensor rule waits for a threshold")
+            await settings.locator("input[data-change='glance-below']").nth(0).fill("20")
+            await settings.locator("input[data-change='glance-below']").nth(0).blur()
+            await page.wait_for_timeout(800)
+            label = settings.locator("input[data-change='glance-label']").nth(1)
+            await label.fill("Phone battery")
+            await label.blur()
+            await page.wait_for_timeout(800)
+            attention = (await stored_settings())["attention"]
+            check(len(attention) == 2 and attention[1] == {"entity_id": "sensor.outside_temperature_battery", "label": "Phone battery",
+                                                           "states": [], "below": 20, "above": None},
+                  "at a glance: threshold and label saved", str(attention))
             await settings.scroll_into_view_if_needed()
             await page.screenshot(path="/tmp/ha-editor-14-settings.png", full_page=True)
+            await settings.locator("[data-action='glance-remove']").nth(0).click()
+            await page.wait_for_timeout(800)
+            attention = (await stored_settings())["attention"]
+            check([r["entity_id"] for r in attention] == ["sensor.outside_temperature_battery"], "at a glance: rule removed", str(attention))
             await ws.call("esp32_screen/screen/update", screen_id=SIM_ID, settings={
-                "weather_entity": "", "indoor_temperature_entity": "", "language": "en", "clock_24h": True})
+                "weather_entity": "", "indoor_temperature_entity": "", "language": "en", "clock_24h": True,
+                "photo_folder": "", "attention": []})
 
             light_errors = list(page.errors)  # type: ignore[attr-defined]
             await page.context.close()

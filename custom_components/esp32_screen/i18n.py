@@ -31,6 +31,10 @@ PT: dict[str, str] = {
     "Clear": "Sem deteção",
     "Wet": "Molhado",
     "Dry": "Seco",
+    "Low": "Baixa",  # battery (a bateria)
+    "Normal": "Normal",
+    "Hot": "Quente",
+    "Cold": "Frio",
     "Locked": "Trancada",
     "Unlocked": "Destrancada",
     "Locking": "A trancar",

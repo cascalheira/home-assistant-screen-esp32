@@ -257,7 +257,7 @@ class ScreenSim:
                 self._spawn(self.perform_ota(event, fail=self.ota_mode == "fail"))
         elif event.get("kind") == "command":
             self.log(f"command {event['command']} {event.get('value')!r}")
-        elif event.get("kind") in ("settings", "info", "notify", "dismiss"):
+        elif event.get("kind") in ("settings", "info", "notify", "dismiss", "attention", "photos"):
             self.log(f"{event['kind']}: { {k: v for k, v in event.items() if k != 'kind'} }")
         else:
             self.log("unknown event:", event)

@@ -8,20 +8,25 @@
 
 import { Icons } from "dashboard.slint";
 import { BoardArt } from "@board";
-import { ForecastDayView } from "types.slint";
+import { ForecastDayView, AttentionItem } from "types.slint";
 
 // Screensaver colours: dark or light, set from Rust (its own theme setting).
 export global SaverTheme {
     in-out property <bool> dark: true;
+    // Night mode "red": dim red on black, easy on eyes used to the dark.
+    in-out property <bool> red: false;
     // Colour weather icons (images) instead of the monochrome glyphs.
     in-out property <bool> colour-icons: false;
-    out property <color> bg: root.dark ? #000000 : #eef0f4;
-    out property <color> ink: root.dark ? #e9ecf2 : #151a23;
-    out property <color> muted: root.dark ? #8b93a3 : #5b6474;
+    out property <color> bg: root.red || root.dark ? #000000 : #eef0f4;
+    out property <color> ink: root.red ? #b3261e : root.dark ? #e9ecf2 : #151a23;
+    out property <color> muted: root.red ? #7a1a14 : root.dark ? #8b93a3 : #5b6474;
     // Flip-clock cards, the line across them and the colon.
-    out property <color> card: root.dark ? #1b1f27 : #ffffff;
-    out property <color> hinge: root.dark ? #07080b : #c9ced7;
-    out property <color> colon: root.dark ? #9aa3b5 : #5b6474;
+    out property <color> card: root.red ? #140302 : root.dark ? #1b1f27 : #ffffff;
+    out property <color> hinge: root.red ? #000000 : root.dark ? #07080b : #c9ced7;
+    out property <color> colon: root.red ? #7a1a14 : root.dark ? #9aa3b5 : #5b6474;
+    // "At a glance" items: their icons and the chips behind them.
+    out property <color> alert: root.red ? #b3261e : root.dark ? #fbbf24 : #b45309;
+    out property <color> chip: root.red ? #140302 : root.dark ? #161a22 : #ffffff;
     // Forecast columns: today, the other days.
     out property <color> today: root.dark ? #161a22 : #ffffff;
     out property <color> day: root.dark ? #0e1116 : #e2e6ec;
@@ -201,6 +206,47 @@ component Colon inherits VerticalLayout {
     }
 }
 
+// "At a glance": what needs attention, as chips (Rust sends at most three
+// and how many more there are).
+export component AttentionLine inherits HorizontalLayout {
+    in property <[AttentionItem]> items;
+    in property <int> more;
+    in property <length> max-chip-width: 300px;
+    alignment: center;
+    spacing: 12px;
+    for item[i] in root.items: Rectangle {
+        width: min(chip-row.preferred-width, root.max-chip-width);
+        height: 44px;
+        border-radius: 22px;
+        background: SaverTheme.chip;
+        chip-row := HorizontalLayout {
+            padding-left: 14px;
+            padding-right: 18px;
+            spacing: 8px;
+            Text {
+                text: item.glyph;
+                font-family: Icons.family;
+                font-size: 24px;
+                color: SaverTheme.alert;
+                vertical-alignment: center;
+            }
+            Text {
+                text: item.text;
+                font-size: 20px;
+                color: SaverTheme.ink;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+    }
+    if root.more > 0: Text {
+        text: "+" + root.more;
+        font-size: 20px;
+        color: SaverTheme.muted;
+        vertical-alignment: center;
+    }
+}
+
 export component ScreenSaver inherits Rectangle {
     in property <bool> flip;
     // One property per card, not arrays: changing one element of an array
@@ -221,12 +267,21 @@ export component ScreenSaver inherits Rectangle {
     in property <string> weather-condition;
     in property <string> weather-temperature;
     in property <string> indoor-temperature;
+    in property <[AttentionItem]> attention;
+    in property <int> attention-more;
+    // Burn-in protection: the contents move a few pixels now and then.
+    in property <length> shift-x;
+    in property <length> shift-y;
 
     background: SaverTheme.bg;
 
     VerticalLayout {
+        x: root.shift-x;
+        y: root.shift-y;
+        width: root.width;
+        height: root.height;
         alignment: center;
-        spacing: 30px;
+        spacing: 24px;
         if root.flip: HorizontalLayout {
             alignment: center;
             spacing: 12px;
@@ -309,6 +364,11 @@ export component ScreenSaver inherits Rectangle {
                 }
             }
         }
+        if root.attention.length > 0: AttentionLine {
+            items: root.attention;
+            more: root.attention-more;
+            max-chip-width: (root.width - 120px) / root.attention.length;
+        }
     }
 }
 
@@ -326,6 +386,8 @@ export component ForecastView inherits Rectangle {
     // Shown instead of the days when there are none.
     in property <string> title;
     in property <string> hint;
+    in property <length> shift-x;
+    in property <length> shift-y;
 
     property <color> ink: SaverTheme.ink;
     property <color> muted: SaverTheme.muted;
@@ -333,6 +395,10 @@ export component ForecastView inherits Rectangle {
     background: SaverTheme.bg;
 
     VerticalLayout {
+        x: root.shift-x;
+        y: root.shift-y;
+        width: root.width;
+        height: root.height;
         padding: 32px;
         padding-top: 26px;
         spacing: 22px;
@@ -485,6 +551,106 @@ export component ForecastView inherits Rectangle {
                 wrap: word-wrap;
                 horizontal-alignment: center;
             }
+        }
+    }
+}
+
+// The photo screensaver: a photo filling the screen (or whole, centred, when
+// its shape differs a lot), fading in over the previous one, with the time
+// and the "at a glance" items in a corner.
+export component PhotoView inherits Rectangle {
+    in property <image> photo;
+    in property <image> previous;
+    // 0-1 while the new photo fades in (driven from Rust).
+    in property <float> fade: 1;
+    // Fill the screen (cover) or show the whole photo (contain).
+    in property <bool> fill;
+    in property <bool> previous-fill;
+    in property <bool> has-previous;
+    in property <bool> has-photo;
+    in property <string> time;
+    in property <string> date;
+    in property <[AttentionItem]> attention;
+    in property <string> title;
+    in property <string> hint;
+
+    background: #000000;
+
+    if root.has-previous: Image {
+        width: root.width;
+        height: root.height;
+        source: root.previous;
+        image-fit: root.previous-fill ? cover : contain;
+    }
+    if root.has-photo: Image {
+        width: root.width;
+        height: root.height;
+        source: root.photo;
+        image-fit: root.fill ? cover : contain;
+        opacity: root.fade;
+    }
+    if root.has-photo: Rectangle {
+        x: 24px;
+        y: root.height - self.height - 24px;
+        width: corner.preferred-width;
+        height: corner.preferred-height;
+        border-radius: 18px;
+        background: #000000a0;
+        corner := VerticalLayout {
+            padding: 14px;
+            padding-left: 18px;
+            padding-right: 18px;
+            spacing: 2px;
+            Text {
+                text: root.time;
+                font-size: 40px;
+                font-weight: 600;
+                color: #ffffff;
+            }
+            Text {
+                text: root.date;
+                font-size: 18px;
+                color: #d0d4dc;
+            }
+            for item in root.attention: HorizontalLayout {
+                height: 30px;
+                spacing: 8px;
+                Text {
+                    text: item.glyph;
+                    font-family: Icons.family;
+                    font-size: 20px;
+                    color: #fbbf24;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: item.text;
+                    font-size: 18px;
+                    color: #ffffff;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    max-width: 360px;
+                }
+            }
+        }
+    }
+    if !root.has-photo: VerticalLayout {
+        alignment: center;
+        spacing: 12px;
+        padding-left: 60px;
+        padding-right: 60px;
+        Text {
+            text: root.title;
+            font-size: 28px;
+            font-weight: 600;
+            color: #e9ecf2;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: root.hint;
+            font-size: 18px;
+            color: #8b93a3;
+            wrap: word-wrap;
+            horizontal-alignment: center;
         }
     }
 }

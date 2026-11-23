@@ -1,0 +1,4 @@
+# The ESP32-P4 board's camera sensor driver (see ov02c10/README.md).
+menu "OV02C10 camera sensor"
+    rsource "ov02c10/Kconfig.ov02c10"
+endmenu

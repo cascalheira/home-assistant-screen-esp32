@@ -108,3 +108,29 @@ pub fn light_glyph(name: &str) -> &'static str {
         .map(|(_, g)| *g)
         .unwrap_or("")
 }
+
+/// Icons of the screensaver's "at a glance" items, by the key Home
+/// Assistant sends (docs/protocol.md section 7).
+pub const ATTENTION_ICONS: &[(&str, &str)] = &[
+    ("door", "\u{F081C}"),
+    ("window", "\u{F11DC}"),
+    ("garage", "\u{F12D4}"),
+    ("lock", "\u{F0FC6}"),
+    ("light", "\u{F06E8}"),
+    ("power", "\u{F06A5}"),
+    ("motion", "\u{F0D91}"),
+    ("water", "\u{F1502}"),
+    ("smoke", "\u{F192E}"),
+    ("battery", "\u{F10CD}"),
+    ("thermometer", "\u{F0E01}"),
+    ("alert", "\u{F0028}"),
+];
+
+/// Glyph for an "at a glance" icon key (the alert sign when unknown).
+pub fn attention_glyph(key: &str) -> &'static str {
+    ATTENTION_ICONS
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map(|(_, g)| *g)
+        .unwrap_or("\u{F0028}")
+}

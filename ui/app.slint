@@ -6,16 +6,17 @@
 import "fonts/Inter-Regular.ttf";
 import "fonts/Inter-SemiBold.ttf";
 import { Theme } from "theme.slint";
-import { NetworkItem, InstanceItem, PageTab, TileData, ModeItem, ActionButton, ForecastDayView } from "types.slint";
+import { NetworkItem, InstanceItem, PageTab, TileData, ModeItem, ActionButton, ForecastDayView, AttentionItem } from "types.slint";
 import {
     Button, SignalBars, LoadingDots, Badge, StepChip, Header, NetworkRow, Keyboard, EntryField, InfoRow, Segmented,
     SectionTitle,
     SettingRow,
+    TimeStepper,
 } from "widgets.slint";
 import { Icons, TileView, ClimateSheet, DimmerSheet, ActionSheet, LevelSlider } from "dashboard.slint";
-import { ScreenSaver, ForecastView, SaverTheme } from "clock.slint";
+import { ScreenSaver, ForecastView, PhotoView, SaverTheme } from "clock.slint";
 
-export { NetworkItem, InstanceItem, PageTab, TileData, ModeItem, ActionButton, ForecastDayView }
+export { NetworkItem, InstanceItem, PageTab, TileData, ModeItem, ActionButton, ForecastDayView, AttentionItem }
 export { Theme, SaverTheme }
 
 export enum Page { welcome, networks, entry, connecting, result, ha-find, dashboard, settings }
@@ -232,6 +233,7 @@ export component AppWindow inherits Window {
         { glyph: "\u{F07D0}", title: @tr("Home Assistant") },
         { glyph: "\u{F0379}", title: @tr("Display") },
         { glyph: "\u{F0150}", title: @tr("Screensaver") },
+        { glyph: "\u{F0594}", title: @tr("Night") },
         { glyph: "\u{F033E}", title: @tr("Security") },
         { glyph: "\u{F02FD}", title: @tr("About") },
     ];
@@ -264,7 +266,33 @@ export component AppWindow inherits Window {
     in property <bool> saver-flip;
     in property <bool> saver-weather; // forecast screensaver on
     in property <int> saver-rotate; // index into the rotation options
-    in property <int> saver-view; // 0 clock, 1 forecast
+    in property <int> saver-view; // 0 clock, 1 forecast, 2 photo, 3 blank (screen off at night)
+    in property <bool> saver-photos; // photo screensaver on
+    in property <string> saver-photos-detail; // where the photos come from
+    in property <bool> saver-shift; // burn-in protection on
+    in property <length> saver-shift-x;
+    in property <length> saver-shift-y;
+    in property <image> saver-photo;
+    in property <image> saver-photo-prev;
+    in property <float> saver-photo-fade: 1;
+    in property <bool> saver-photo-fill;
+    in property <bool> saver-photo-prev-fill;
+    in property <bool> saver-photo-has;
+    in property <bool> saver-photo-has-prev;
+    in property <string> photo-title;
+    in property <string> photo-hint;
+    // "At a glance" (at most three) and how many more.
+    in property <[AttentionItem]> attention;
+    in property <int> attention-more;
+    // ---- Night
+    in property <int> night-mode; // 0 off, 1 dim, 2 red, 3 screen off
+    in property <int> night-hours; // 0 sunset to sunrise, 1 set hours
+    in property <string> night-from;
+    in property <string> night-until;
+    in property <string> night-detail;
+    in property <bool> has-camera;
+    in property <bool> motion-wake;
+    in property <string> motion-detail;
     in property <string> clock-time; // "14:05", for the forecast view
     in property <[ForecastDayView]> forecast-days;
     in property <string> forecast-title; // shown when there are no days
@@ -344,6 +372,13 @@ export component AppWindow inherits Window {
     callback pin-ok();
     callback pin-cancel();
     callback saver-rotate-picked(int);
+    callback saver-photos-picked(int);
+    callback saver-shift-picked(int);
+    callback night-mode-picked(int);
+    callback night-hours-picked(int);
+    callback night-from-step(int); // -1 or +1: half an hour
+    callback night-until-step(int);
+    callback motion-wake-picked(int);
 
     // Never set. Its only job is to make the glyph embedder include these
     // characters (Latin-1 for accented names, plus symbols HA sends such as
@@ -355,8 +390,9 @@ export component AppWindow inherits Window {
     property <bool> confirm-sign-out: false;
 
     if root.glyph-coverage: Text {
-        // Page icons, light tile icons (src/icons.rs), then text characters.
-        text: "\u{F02DC}\u{F04B9}\u{F02E3}\u{F0A70}\u{F0176}\u{F09A0}\u{F1818}\u{F09AB}\u{F1239}\u{F0F91}\u{F0E7D}\u{F128D}\u{F072A}\u{F04CD}\u{F081A}\u{F0DD2}\u{F0D80}\u{F0D81}\u{F0D84}\u{F112B}\u{F1817}\u{F06D9}\u{F010B}\u{F0299}\u{F0531}\u{F024A}\u{F0E66}\u{F0606}\u{F03E9}\u{F01E6}\u{F0502}\u{F075A}\u{F0297}\u{F1253}\u{F0393}\u{F001B}\u{F1A79}\u{F0210}\u{F0238}\u{F0717}\u{F058C}\u{F06A5}\u{F0599}\u{F06A9}\u{F068A}\u{F07AE}\u{F0769}\u{F18DD}\u{F1793}\u{F179B}\u{F0914}\u{F04C9}\u{F17F4}\u{F141E}\u{F11E1}\u{F091C}\u{F091D}\u{F0748}\u{F1020}\u{F1A37}\u{F1054}\u{F1A60}\u{F1A2F}\u{F1987}\u{F1988}\u{F066F}\u{F06B5}\u{F1576}\u{F095F}\u{F08DD}\u{F1747}\u{F1804}\u{F1051}\u{F12BA}\u{F1356}\u{F1798}\u{F1253}¡¢£¤¥¦§¨©ª«¬®¯°±²³´µ¶·¸¹º»¼½¾¿ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ–—‘’“”•→←↑↓…€";
+        // Page icons, light tile icons, "at a glance" icons (src/icons.rs),
+        // then text characters.
+        text: "\u{F02DC}\u{F04B9}\u{F02E3}\u{F0A70}\u{F0176}\u{F09A0}\u{F1818}\u{F09AB}\u{F1239}\u{F0F91}\u{F0E7D}\u{F128D}\u{F072A}\u{F04CD}\u{F081A}\u{F0DD2}\u{F0D80}\u{F0D81}\u{F0D84}\u{F112B}\u{F1817}\u{F06D9}\u{F010B}\u{F0299}\u{F0531}\u{F024A}\u{F0E66}\u{F0606}\u{F03E9}\u{F01E6}\u{F0502}\u{F075A}\u{F0297}\u{F1253}\u{F0393}\u{F001B}\u{F1A79}\u{F0210}\u{F0238}\u{F0717}\u{F058C}\u{F06A5}\u{F0599}\u{F06A9}\u{F068A}\u{F07AE}\u{F0769}\u{F18DD}\u{F1793}\u{F179B}\u{F0914}\u{F04C9}\u{F17F4}\u{F141E}\u{F11E1}\u{F091C}\u{F091D}\u{F0748}\u{F1020}\u{F1A37}\u{F1054}\u{F1A60}\u{F1A2F}\u{F1987}\u{F1988}\u{F066F}\u{F06B5}\u{F1576}\u{F095F}\u{F08DD}\u{F1747}\u{F1804}\u{F1051}\u{F12BA}\u{F1356}\u{F1798}\u{F1253}\u{F081C}\u{F11DC}\u{F12D4}\u{F0FC6}\u{F06E8}\u{F06A5}\u{F0D91}\u{F1502}\u{F192E}\u{F10CD}\u{F0E01}\u{F0028}¡¢£¤¥¦§¨©ª«¬®¯°±²³´µ¶·¸¹º»¼½¾¿ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ–—‘’“”•→←↑↓…€";
     }
 
     // ---- Welcome
@@ -920,10 +956,10 @@ export component AppWindow inherits Window {
                 // Sections
                 VerticalLayout {
                     width: 214px;
-                    spacing: 6px;
+                    spacing: 4px;
                     alignment: start;
                     for section[i] in root.settings-sections: Rectangle {
-                        height: 56px;
+                        height: 50px;
                         border-radius: 12px;
                         background: i == root.settings-section ? Theme.surface-2 : section-ta.pressed ? Theme.surface : transparent;
                         HorizontalLayout {
@@ -1101,7 +1137,9 @@ export component AppWindow inherits Window {
                     }
 
                     // Screensaver
-                    if root.settings-section == 3: VerticalLayout {
+                    if root.settings-section == 3: Flickable {
+                        content-height: saver-rows.preferred-height;
+                        saver-rows := VerticalLayout {
                         padding: 22px;
                         spacing: 14px;
                         SettingRow {
@@ -1121,20 +1159,35 @@ export component AppWindow inherits Window {
                             }
                         }
                         SettingRow {
-                            label: @tr("Weather icons");
+                            label: @tr("Photos");
                             Segmented {
-                                options: [@tr("Simple"), @tr("Colour")];
-                                selected: root.saver-colour-icons ? 1 : 0;
-                                picked(i) => { root.saver-colour-icons-picked(i); }
+                                options: [@tr("Off"), @tr("On")];
+                                selected: root.saver-photos ? 1 : 0;
+                                picked(i) => { root.saver-photos-picked(i); }
                             }
+                        }
+                        Text {
+                            text: root.saver-photos-detail;
+                            font-size: 15px;
+                            color: Theme.muted;
+                            wrap: word-wrap;
                         }
                         SettingRow {
                             label: @tr("Switch every");
                             Segmented {
                                 options: [@tr("10 s"), @tr("20 s"), @tr("30 s"), @tr("60 s")];
                                 selected: root.saver-rotate;
-                                enabled: root.saver-weather && root.saver-mode != 0;
+                                enabled: root.saver-photos || (root.saver-weather && root.saver-mode != 0);
                                 picked(i) => { root.saver-rotate-picked(i); }
+                            }
+                        }
+                        SettingRow {
+                            label: @tr("Start after");
+                            Segmented {
+                                options: [@tr("1 min"), @tr("5 min"), @tr("15 min")];
+                                selected: root.saver-delay;
+                                enabled: root.saver-mode != 0 || root.saver-weather || root.saver-photos;
+                                picked(i) => { root.saver-delay-picked(i); }
                             }
                         }
                         SettingRow {
@@ -1147,19 +1200,94 @@ export component AppWindow inherits Window {
                             }
                         }
                         SettingRow {
-                            label: @tr("Start after");
+                            label: @tr("Weather icons");
                             Segmented {
-                                options: [@tr("1 min"), @tr("5 min"), @tr("15 min")];
-                                selected: root.saver-delay;
-                                enabled: root.saver-mode != 0 || root.saver-weather;
-                                picked(i) => { root.saver-delay-picked(i); }
+                                options: [@tr("Simple"), @tr("Colour")];
+                                selected: root.saver-colour-icons ? 1 : 0;
+                                picked(i) => { root.saver-colour-icons-picked(i); }
                             }
                         }
-                        Rectangle { vertical-stretch: 1; }
+                        SettingRow {
+                            label: @tr("Prevent burn-in");
+                            Segmented {
+                                options: [@tr("Off"), @tr("On")];
+                                selected: root.saver-shift ? 1 : 0;
+                                picked(i) => { root.saver-shift-picked(i); }
+                            }
+                        }
+                        Text {
+                            text: @tr("Moves the clock and the forecast by a few pixels every minute, so they don't leave a shadow on the screen.");
+                            font-size: 15px;
+                            color: Theme.muted;
+                            wrap: word-wrap;
+                        }
+                        }
+                    }
+
+                    // Night
+                    if root.settings-section == 4: Flickable {
+                        content-height: night-rows.preferred-height;
+                        night-rows := VerticalLayout {
+                        padding: 22px;
+                        spacing: 14px;
+                        SettingRow {
+                            label: @tr("At night");
+                            Segmented {
+                                options: [@tr("Off"), @tr("Dim"), @tr("Red"), @tr("Screen off")];
+                                selected: root.night-mode;
+                                picked(i) => { root.night-mode-picked(i); }
+                            }
+                        }
+                        SettingRow {
+                            label: @tr("Night");
+                            Segmented {
+                                options: [@tr("Sunset to sunrise"), @tr("Set hours")];
+                                selected: root.night-hours;
+                                enabled: root.night-mode != 0;
+                                picked(i) => { root.night-hours-picked(i); }
+                            }
+                        }
+                        if root.night-hours == 1: SettingRow {
+                            label: @tr("From");
+                            TimeStepper {
+                                value: root.night-from;
+                                enabled: root.night-mode != 0;
+                                step(d) => { root.night-from-step(d); }
+                            }
+                        }
+                        if root.night-hours == 1: SettingRow {
+                            label: @tr("Until");
+                            TimeStepper {
+                                value: root.night-until;
+                                enabled: root.night-mode != 0;
+                                step(d) => { root.night-until-step(d); }
+                            }
+                        }
+                        Text {
+                            text: root.night-detail;
+                            font-size: 15px;
+                            color: Theme.muted;
+                            wrap: word-wrap;
+                        }
+                        if root.has-camera: SettingRow {
+                            label: @tr("Wake on motion");
+                            Segmented {
+                                options: [@tr("Off"), @tr("On")];
+                                selected: root.motion-wake ? 1 : 0;
+                                picked(i) => { root.motion-wake-picked(i); }
+                            }
+                        }
+                        if root.has-camera: Text {
+                            text: root.motion-detail;
+                            font-size: 15px;
+                            color: Theme.muted;
+                            wrap: word-wrap;
+                        }
+                        }
                     }
 
                     // Security
-                    if root.settings-section == 4: VerticalLayout {
+                    if root.settings-section == 5: VerticalLayout {
                         padding: 22px;
                         spacing: 14px;
                         SectionTitle { text: @tr("PIN"); }
@@ -1205,7 +1333,7 @@ export component AppWindow inherits Window {
                     }
 
                     // About
-                    if root.settings-section == 5: VerticalLayout {
+                    if root.settings-section == 6: VerticalLayout {
                         padding: 22px;
                         spacing: 12px;
                         SectionTitle { text: @tr("About this screen"); }
@@ -1396,6 +1524,8 @@ export component AppWindow inherits Window {
     // ---- Screensaver: above everything. Touches never reach it; Rust
     // swallows the waking touch.
     if root.saver-active && root.saver-view == 1: ForecastView {
+        shift-x: root.saver-shift-x;
+        shift-y: root.saver-shift-y;
         days: root.forecast-days;
         time: root.clock-time;
         date: root.clock-date;
@@ -1405,7 +1535,28 @@ export component AppWindow inherits Window {
         title: root.forecast-title;
         hint: root.forecast-hint;
     }
+    if root.saver-active && root.saver-view == 2: PhotoView {
+        photo: root.saver-photo;
+        previous: root.saver-photo-prev;
+        fade: root.saver-photo-fade;
+        fill: root.saver-photo-fill;
+        previous-fill: root.saver-photo-prev-fill;
+        has-photo: root.saver-photo-has;
+        has-previous: root.saver-photo-has-prev;
+        time: root.clock-time;
+        date: root.clock-date;
+        attention: root.attention;
+        title: root.photo-title;
+        hint: root.photo-hint;
+    }
+    if root.saver-active && root.saver-view == 3: Rectangle {
+        background: #000000;
+    }
     if root.saver-active && root.saver-view == 0: ScreenSaver {
+        shift-x: root.saver-shift-x;
+        shift-y: root.saver-shift-y;
+        attention: root.attention;
+        attention-more: root.attention-more;
         flip: root.saver-flip;
         weather-condition: root.clock-weather-condition;
         weather-temperature: root.clock-weather-temperature;

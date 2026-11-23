@@ -15,8 +15,10 @@ import copy
 import datetime
 import hashlib
 import os
+import shutil
 import struct
 import sys
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +49,8 @@ REAL_ID = local.real_screen_id()  # "" when no real screen is registered
 
 RESULTS: list[tuple[bool, str, str]] = []
 DEFAULT_FIRMWARE_DIR = Path(__file__).resolve().parent.parent / "dev-config" / "esp32_screen" / "firmware"
+# The dev instance's `dev` media folder (dev/configuration.yaml), /config/media inside.
+DEFAULT_MEDIA_DIR = Path(__file__).resolve().parent.parent / "dev-config" / "media"
 FW_PREFIX = "e2e-test-"
 
 
@@ -192,9 +196,12 @@ async def settings_tests(admin: HAWebSocket, sim: ScreenSim) -> None:
     check(all(len(t) == 5 and t[2] == ":" for t in (SUNRISE, SUNSET)),
           "info carries today's sunrise and sunset (HH:MM)", f"{SUNRISE!r} {SUNSET!r}")
     check(sim.events[3].get("sun") == SUN, "info carries sun.sun for the auto theme", f"{sim.events[3].get('sun')!r} vs {sun_state!r}")
-    after_subscribe = [e["kind"] for e in sim.events[:4]]
-    check(after_subscribe == ["layout", "states", "settings", "info"], "subscribe sends layout, states, settings, info", str(after_subscribe))
+    after_subscribe = [e["kind"] for e in sim.events[:5]]
+    check(after_subscribe == ["layout", "states", "settings", "info", "attention"], "subscribe sends layout, states, settings, info, attention",
+          str(after_subscribe))
     check({"kind": "forecast", "unit": "", "days": []} in sim.events, "no weather entity -> empty forecast event")
+    check(sim.events[4] == {"kind": "attention", "items": []} and {"kind": "photos", "count": 0} in sim.events,
+          "no rules, no photo folder -> empty attention, 0 photos", str([e for e in sim.events if e["kind"] in ("attention", "photos")]))
     check(sim.events[2] == {"kind": "settings", "settings": {"language": "en", "clock_24h": True}}
           and sim.events[3] == {"kind": "info", "weather_condition": "", "weather_temperature": "", "indoor_temperature": "", "sun": SUN, "sunrise": SUNRISE, "sunset": SUNSET},
           "defaults: en, 24 h clock, no info", f"{sim.events[2]} {sim.events[3]}")
@@ -231,7 +238,7 @@ async def settings_tests(admin: HAWebSocket, sim: ScreenSim) -> None:
     stored = next(s_ for s_ in (await admin.call("esp32_screen/screens"))["screens"] if s_["screen_id"] == SIM_ID)
     check(stored["settings"] == {"weather_entity": "weather.demo_weather_south", "indoor_temperature_entity": "sensor.living_room_temperature",
                                  "language": "pt", "clock_24h": False, "doorbell_entity": "", "doorbell_camera": "",
-                                 "doorbell_action": "", "doorbell_timeout": 60},
+                                 "doorbell_action": "", "doorbell_timeout": 60, "photo_folder": "", "attention": []},
           "settings stored with the screen record", str(stored["settings"]))
 
     mark = sim.mark()
@@ -280,6 +287,189 @@ async def settings_tests(admin: HAWebSocket, sim: ScreenSim) -> None:
     except TimeoutError:
         check(False, "clearing the entities -> empty info", "no info event")
 
+def png(width: int, height: int, color: tuple[int, int, int]) -> bytes:
+    """A solid-colour RGB PNG, without Pillow."""
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+    row = b"\0" + bytes(color) * width
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(row * height)) + chunk(b"IEND", b""))
+
+
+async def photo_tests(admin: HAWebSocket, sim: ScreenSim, media_dir: Path) -> None:
+    """Section 7: photo frame folder, photos event, the photo endpoint."""
+    folder = media_dir / "e2e-photos"
+    escape = media_dir / "e2e-escape"
+    shutil.rmtree(folder, ignore_errors=True)
+    escape.unlink(missing_ok=True)
+    (folder / "sub").mkdir(parents=True)
+    colors = [(200, 30, 30), (30, 200, 30), (30, 30, 200), (200, 200, 30)]
+    for i, color in enumerate(colors[:3]):
+        (folder / f"photo{i}.PNG").write_bytes(png(320 + 40 * i, 200, color))
+    (folder / "sub" / "tall.png").write_bytes(png(120, 300, colors[3]))
+    (folder / "broken.jpg").write_bytes(b"not a picture")
+    (folder / "notes.txt").write_text("not a photo")
+    (folder / ".hidden.jpg").write_bytes(b"x")
+
+    async def update(**settings: Any) -> Any:
+        return await admin.call("esp32_screen/screen/update", screen_id=SIM_ID, settings=settings)
+
+    async def photos_after(coro: Any) -> dict[str, Any] | None:
+        mark = sim.mark()
+        await coro
+        try:
+            return await sim.wait_for(lambda e: e.get("kind") == "photos", 10, since=mark)
+        except TimeoutError:
+            return None
+
+    ev = await photos_after(update(photo_folder="dev:e2e-photos"))
+    check(ev == {"kind": "photos", "count": 5}, "photo folder set -> photos event with the image count (5: jpg/png, recursive)", str(ev))
+    info = await admin.call("esp32_screen/photos", screen_id=SIM_ID)
+    check(info["folder"] == "dev:e2e-photos" and info["path"] == "/config/media/e2e-photos" and info["count"] == 5
+          and info["media_dirs"].get("dev") == "/config/media",
+          "esp32_screen/photos (editor): folder, path, count, media folders", str(info))
+    await expect_error(sim.ws.call("esp32_screen/photos", screen_id=SIM_ID), "unauthorized", "esp32_screen/photos: non-admin rejected")
+
+    base = f"/api/esp32_screen/photo/{SIM_ID}"
+    seen: list[str] = []
+    for i in range(8):
+        status, body, headers = await sim.download(f"{base}?w=800&h=480")
+        sof, width, height = jpeg_info(body) if status == 200 else ("?", 0, 0)
+        ok = status == 200 and headers.get("Content-Type") == "image/jpeg" and sof == "SOF0" and (width, height) == (800, 480)
+        if i in (0, 7) or not ok:
+            check(ok, f"photo {i + 1}: baseline JPEG of exactly 800x480",
+                  f"HTTP {status} {headers.get('Content-Type')} {sof} {width}x{height} {len(body)} bytes {headers.get('X-Photo-Index')}")
+        seen.append(hashlib.sha256(body).hexdigest())
+        index = headers.get("X-Photo-Index", "")
+        if not (index.endswith("/5") and 1 <= int(index.split("/")[0] or 0) <= 5):
+            check(False, "X-Photo-Index is i/5", index)
+    check(len(set(seen[:4])) == 4 and len(set(seen[4:])) == 4 and set(seen[:4]) == set(seen[4:]),
+          "each pass shows the 4 readable photos once each (broken one skipped), then reshuffles", f"{len(set(seen))} distinct")
+    status, body, _ = await sim.download(f"{base}?w=5000&h=10")
+    check(status == 200 and jpeg_info(body)[1:] == (1280, 16), "w/h clamped to 16..1280 x 16..800", str(jpeg_info(body)))
+    status, body, _ = await sim.download(f"{base}?w=480&h=800")
+    check(status == 200 and jpeg_info(body)[1:] == (480, 800), "portrait screen size 480x800", str(jpeg_info(body)))
+    for query in ("w=abc&h=480", "w=800", ""):
+        status, _, _ = await sim.download(f"{base}?{query}")
+        check(status == 400, f"photo with bad size ({query or 'none'}) -> 400", f"HTTP {status}")
+    status, _, _ = await sim.download(f"{base}?w=800&h=480", token=None)
+    check(status == 401, "photo without a token -> 401", f"HTTP {status}")
+    status, _, _ = await sim.download("/api/esp32_screen/photo/FFFFFFFFFFF1?w=800&h=480")
+    check(status == 404, "photo for an unknown screen -> 404", f"HTTP {status}")
+
+    ev = await photos_after(update(photo_folder="/config/media/e2e-photos/sub"))
+    check(ev == {"kind": "photos", "count": 1}, "absolute path inside a media folder; folder change -> new count", str(ev))
+    (folder / "sub" / "new.webp").write_bytes(b"x")
+    ev = await photos_after(update(photo_folder="dev:e2e-photos/sub"))
+    check(ev == {"kind": "photos", "count": 2}, "settings change rescans the folder", str(ev))
+    ev = await photos_after(update(photo_folder="dev:no-such-folder"))
+    check(ev == {"kind": "photos", "count": 0}, "missing folder -> 0 photos", str(ev))
+    status, _, _ = await sim.download(f"{base}?w=800&h=480")
+    check(status == 404, "no photos -> 404", f"HTTP {status}")
+
+    escape.symlink_to("/etc")
+    for value, name in (("../secrets", ".."), ("dev:../..", "<source>:.."), ("/etc", "absolute path outside"),
+                        ("/config/media/../.storage", "absolute path with .."), ("usb2:photos", "unknown media folder"),
+                        ("dev:e2e-escape", "symlink leading out")):
+        await expect_error(update(photo_folder=value), "invalid_format", f"photo_folder rejected: {name}", "photo_folder")
+    escape.unlink()
+    stored = next(s_ for s_ in (await admin.call("esp32_screen/screens"))["screens"] if s_["screen_id"] == SIM_ID)
+    check(stored["settings"]["photo_folder"] == "dev:no-such-folder", "rejected folders are not stored", stored["settings"]["photo_folder"])
+    ev = await photos_after(update(photo_folder=""))
+    check(ev == {"kind": "photos", "count": 0} or ev is None, "folder cleared", str(ev))
+    shutil.rmtree(folder, ignore_errors=True)
+
+
+async def attention_tests(admin: HAWebSocket, sim: ScreenSim) -> None:
+    """Section 7: "at a glance" rules and the attention event."""
+    async def update(**settings: Any) -> Any:
+        return await admin.call("esp32_screen/screen/update", screen_id=SIM_ID, settings=settings)
+
+    async def service(domain: str, name: str, entity: str, **data: Any) -> None:
+        await admin.call("call_service", domain=domain, service=name, target={"entity_id": entity}, service_data=data)
+
+    async def items_after(coro: Any, name: str, cond: Any = None) -> list[dict[str, str]] | None:
+        """Items of the first attention event after `coro` (that matches `cond`)."""
+        mark = sim.mark()
+        await coro
+        try:
+            return (await sim.wait_for(
+                lambda e: e.get("kind") == "attention" and (cond is None or cond(e["items"])), 8, since=mark))["items"]
+        except TimeoutError:
+            last = [e["items"] for e in sim.events[mark:] if e.get("kind") == "attention"]
+            check(False, name, f"no matching attention event; got {last}")
+            return None
+
+    rules = [
+        {"entity_id": "binary_sensor.movement_backyard"},
+        {"entity_id": "cover.garage_door", "label": "Garage"},
+        {"entity_id": "lock.kitchen_door"},
+        {"entity_id": "lock.front_door"},
+        {"entity_id": "sensor.outside_temperature_battery", "label": "Phone battery", "below": 20},
+        {"entity_id": "sensor.living_room_temperature", "label": "Room", "above": 24},
+        {"entity_id": "input_boolean.guest_mode", "label": "Guests"},
+        {"entity_id": "person.nobody", "states": ["home"]},
+    ]
+    items = await items_after(update(attention=rules), "attention rules set -> attention event")
+    expected = [
+        {"icon": "motion", "text": "Movement Backyard · Detected"},
+        {"icon": "lock", "text": "Kitchen Door · Unlocked"},
+        {"icon": "battery", "text": "Phone battery · 12 %"},
+    ]
+    check(items == expected, "active rules in order: defaults per domain, below threshold with unit, closed/locked left out", str(items))
+    stored = next(s_ for s_ in (await admin.call("esp32_screen/screens"))["screens"] if s_["screen_id"] == SIM_ID)["settings"]["attention"]
+    check(stored[0] == {"entity_id": "binary_sensor.movement_backyard", "label": "", "states": [], "below": None, "above": None}
+          and stored[4]["below"] == 20, "rules stored with defaults filled in", str(stored[:1]))
+
+    items = await items_after(service("input_number", "set_value", "input_number.room_temperature", value=24.6),
+                              "above threshold -> attention event")
+    check(items is not None and {"icon": "thermometer", "text": "Room · 24.6 °C"} in items, "sensor above its threshold appears", str(items))
+    items = await items_after(service("input_boolean", "turn_off", "input_boolean.room_sensor_online"), "unavailable -> attention event")
+    check(items is not None and not any(i["text"].startswith("Room") for i in items), "unavailable entities never count", str(items))
+    await service("input_boolean", "turn_on", "input_boolean.room_sensor_online")
+    await service("input_number", "set_value", "input_number.room_temperature", value=23.4)
+    await asyncio.sleep(0.5)
+    items = await items_after(service("cover", "open_cover", "cover.garage_door"), "cover opens -> attention event",
+                              lambda items: any(i["icon"] == "garage" for i in items))
+    check(items is not None and items[1]["icon"] == "garage" and items[1]["text"] in ("Garage · Opening", "Garage · Open"),
+          "garage cover opening appears, in rule order, with its label", str(items))
+    items = await items_after(service("input_boolean", "turn_on", "input_boolean.guest_mode"), "input_boolean on -> attention event",
+                              lambda items: any(i["text"].startswith("Guests") for i in items))
+    check(items is not None and items[-1] == {"icon": "power", "text": "Guests · On"}, "input_boolean on -> power icon", str(items))
+
+    await asyncio.sleep(1)  # the garage door finishes opening
+    mark = sim.mark()
+    await service("light", "toggle", "light.bed_light")
+    await asyncio.sleep(0.5)
+    check(not any(e.get("kind") == "attention" for e in sim.events[mark:]), "unrelated changes send no attention event",
+          str([e for e in sim.events[mark:] if e.get("kind") == "attention"]))
+    await service("light", "toggle", "light.bed_light")
+
+    items = await items_after(update(language="pt"), "language pt -> attention event")
+    check(items is not None and items[0]["text"] == "Movement Backyard · Detetado"
+          and {"icon": "lock", "text": "Kitchen Door · Destrancada"} in items and items[-1]["text"] == "Guests · Ligado",
+          "texts in the screen's language (pt)", str(items))
+    await update(language="en")
+
+    # Six items at most.
+    many = [{"entity_id": e} for e in ("light.ceiling_lights", "light.kitchen_lights", "light.office_rgbw_lights",
+                                       "light.living_room_rgbww_lights", "light.entrance_color_white_lights",
+                                       "switch.decorative_lights", "media_player.walkman", "valve.front_garden")]
+    items = await items_after(update(attention=many), "eight active rules -> attention event")
+    check(items is not None and len(items) == 6 and items[5]["icon"] == "power", "at most 6 items", str(items))
+
+    await expect_error(update(attention=[*many, {"entity_id": "light.bed_light"}]), "invalid_format", "more than 8 rules rejected")
+    await expect_error(update(attention=[{"entity_id": "sensor.outside_temperature"}]), "invalid_format",
+                       "a sensor rule needs states or a threshold", "threshold")
+    await expect_error(update(attention=[{"entity_id": "not an entity"}]), "invalid_format", "rule with a bad entity id rejected")
+    await expect_error(update(attention=[{"entity_id": "sensor.x", "below": "low"}]), "invalid_format", "threshold must be a number")
+    await expect_error(update(attention=[{"entity_id": "sensor.x", "above": True}]), "invalid_format", "threshold may not be a bool")
+
+    items = await items_after(update(attention=[]), "rules cleared -> attention event")
+    check(items == [], "no rules -> empty items", str(items))
+    await service("cover", "close_cover", "cover.garage_door")
+    await service("input_boolean", "turn_off", "input_boolean.guest_mode")
+
 
 async def read_frames(sim: ScreenSim, url: str, count: int, limit: float = 20) -> tuple[int, str, list[bytes], float]:
     """Open an MJPEG stream like the screen: (status, content type, the first `count` JPEGs, seconds)."""
@@ -309,7 +499,9 @@ async def read_frames(sim: ScreenSim, url: str, count: int, limit: float = 20) -
 async def copy_tests(admin: HAWebSocket, sim: ScreenSim) -> None:
     """esp32_screen/screen/copy: layout and settings onto another screen."""
     copy_id = "0A0B0C0D0E0F"
-    await admin.call("esp32_screen/screen/update", screen_id=SIM_ID, settings={"language": "pt", "clock_24h": False})
+    await admin.call("esp32_screen/screen/update", screen_id=SIM_ID, settings={
+        "language": "pt", "clock_24h": False, "photo_folder": "dev:e2e-photos",
+        "attention": [{"entity_id": "lock.kitchen_door", "label": "Back door"}]})
     await admin.call("esp32_screen/screen/copy", screen_id=copy_id, from_screen_id=SIM_ID)
     screens = {s_["screen_id"]: s_ for s_ in (await admin.call("esp32_screen/screens"))["screens"]}
     src, dst = screens[SIM_ID], screens.get(copy_id)
@@ -323,8 +515,11 @@ async def copy_tests(admin: HAWebSocket, sim: ScreenSim) -> None:
                        "invalid_format", "screen/copy onto itself -> invalid_format")
     await expect_error(sim.ws.call("esp32_screen/screen/copy", screen_id=copy_id, from_screen_id=SIM_ID),
                        "unauthorized", "screen/copy: non-admin rejected")
+    check(dst is not None and dst["settings"]["photo_folder"] == "dev:e2e-photos" and dst["settings"]["attention"][0]["label"] == "Back door",
+          "screen/copy copies the photo folder and the attention rules")
     await admin.call("esp32_screen/screen/remove", screen_id=copy_id)
-    await admin.call("esp32_screen/screen/update", screen_id=SIM_ID, settings={"language": "en", "clock_24h": True})
+    await admin.call("esp32_screen/screen/update", screen_id=SIM_ID, settings={"language": "en", "clock_24h": True,
+                                                                               "photo_folder": "", "attention": []})
 
 
 async def doorbell_tests(admin: HAWebSocket, sim: ScreenSim) -> None:
@@ -733,6 +928,8 @@ async def main() -> int:
     parser.add_argument("--url", default="http://localhost:8123")
     parser.add_argument("--firmware-dir", type=Path, default=DEFAULT_FIRMWARE_DIR,
                         help="host path of <HA config>/esp32_screen/firmware")
+    parser.add_argument("--media-dir", type=Path, default=DEFAULT_MEDIA_DIR,
+                        help="host path of the dev instance's `dev` media folder (/config/media)")
     args = parser.parse_args()
     url = args.url.rstrip("/")
     firmware_dir: Path = args.firmware_dir
@@ -1211,6 +1408,8 @@ async def main() -> int:
 
         # ---- clock info and per-screen settings (section 7) -----------------------------------
         await settings_tests(admin, sim)
+        await attention_tests(admin, sim)
+        await photo_tests(admin, sim, args.media_dir)
 
         # ---- notifications (section 8) -----------------------------------------------------------
         await notification_tests(admin, sim, url)

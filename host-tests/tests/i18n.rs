@@ -11,7 +11,10 @@ fn rust_strings() {
     assert_eq!(tr("Cancel"), "Cancelar");
     assert_eq!(tr("not in the table"), "not in the table");
     assert_eq!(trf("Connecting to {}…", &[&"Casa"]), "A ligar a Casa…");
-    assert_eq!(trf("{} signal · {} dBm", &[&tr("Good"), &-60]), "Sinal bom · -60 dBm");
+    assert_eq!(
+        trf("{} signal · {} dBm", &[&tr("Good"), &-60]),
+        "Sinal bom · -60 dBm"
+    );
     set_portuguese(false);
     assert_eq!(tr("Cancel"), "Cancel");
     assert_eq!(trf("Connecting to {}…", &[&"Casa"]), "Connecting to Casa…");
@@ -22,7 +25,11 @@ fn table_is_consistent() {
     let mut seen = BTreeSet::new();
     for (en, pt) in PT {
         assert!(seen.insert(*en), "{en:?} is in the table twice");
-        assert_eq!(en.matches("{}").count(), pt.matches("{}").count(), "placeholders in {en:?}");
+        assert_eq!(
+            en.matches("{}").count(),
+            pt.matches("{}").count(),
+            "placeholders in {en:?}"
+        );
     }
 }
 
@@ -30,7 +37,8 @@ fn table_is_consistent() {
 #[test]
 fn ui_strings_are_translated() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-    let po = std::fs::read_to_string(root.join("ui/translations/pt/LC_MESSAGES/esp32-screen.po")).unwrap();
+    let po = std::fs::read_to_string(root.join("ui/translations/pt/LC_MESSAGES/esp32-screen.po"))
+        .unwrap();
     let mut missing = Vec::new();
     for entry in std::fs::read_dir(root.join("ui")).unwrap() {
         let path = entry.unwrap().path();

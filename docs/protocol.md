@@ -263,7 +263,9 @@ Details:
     `HH:MM`, or `DD Mon HH:MM` when it is not today.
   - A `binary_sensor` uses wording by device class: door, garage_door, window,
     opening → `Open`/`Closed`; motion, occupancy, presence → `Detected`/`Clear`;
-    moisture → `Wet`/`Dry`; anything else → `On`/`Off`. `on` = state on.
+    moisture → `Wet`/`Dry`; smoke, gas, carbon_monoxide → `Detected`/`Clear`;
+    battery → `Low`/`Normal`; heat → `Hot`/`Normal`; cold → `Cold`/`Normal`;
+    lock → `Unlocked`/`Locked`; anything else → `On`/`Off`. `on` = state on.
   - `detail` is `""`.
 - Blind tiles (any cover) report like gate tiles, plus `position`.
   `position` is also filled on gate/garage/valve tiles when the entity reports one.
@@ -341,6 +343,7 @@ Result: `null` on success. Errors use HA's standard error result with codes
 | `esp32_screen/screen/copy` | `screen_id`, `from_screen_id` | `null`. Gives `screen_id` (created if new) a copy of the other screen's layout and settings; its name stays. `not_found` for an unknown source, `invalid_format` when both are the same |
 | `esp32_screen/screen/remove` | `screen_id` | `null`; `not_found` for unknown screens |
 | `esp32_screen/subscribe_screens` | — | `null`, then an event `{"screens":[...]}` right away and again whenever any screen record or online state changes |
+| `esp32_screen/photos` | `screen_id` | `{"folder","path","count","media_dirs"}`: the screen's `photo_folder`, the folder it names inside the container (`""` when unset or invalid), its photo count (scanned now) and HA's media folders. `not_found` for unknown screens |
 
 Non-admin users get HA's `unauthorized` error for all of these.
 `layout/save` for a `screen_id` that has never registered creates its record
@@ -517,20 +520,25 @@ with the screen, not in the layout:
 | `indoor_temperature_entity` | `""` or a `sensor.*` entity | `""` |
 | `language` | `"en"`, `"pt"` | `"en"` |
 | `clock_24h` | bool | `true` |
+| `photo_folder` | `""` or a folder in a media folder (see Photo frame) | `""` |
+| `attention` | up to 8 rules (see At a glance) | `[]` |
 
 ### Events on the screen's subscription
 
-After `layout` and `states`, the subscription sends `settings`, then `info`:
+After `layout` and `states`, the subscription sends `settings`, `info` and
+`attention`, then `forecast` and `photos` once they are ready:
 
 ```jsonc
 {"kind":"settings","settings":{"language":"en","clock_24h":true}}
 {"kind":"info","weather_condition":"sunny","weather_temperature":"22 °C",
  "indoor_temperature":"22.3 °C","sun":"above_horizon","sunrise":"07:42","sunset":"17:31"}
+{"kind":"attention","items":[{"icon":"door","text":"Front door · Open"}]}
+{"kind":"photos","count":42}
 ```
 
-- **Order.** Every `layout` is followed by `states`, `settings` and `info`.
-  Changing the settings sends `settings` and `info` again without a new
-  `layout`.
+- **Order.** Every `layout` is followed by `states`, `settings`, `info` and
+  `attention`; `forecast` and `photos` follow when fetched. Changing the
+  settings sends all five again without a new `layout`.
 - **`weather_condition`.** The weather entity's state, which is HA's condition
   name (`sunny`, `cloudy`, `partlycloudy`, `rainy`, `pouring`,
   `lightning-rainy`, `snowy`, `fog`, `windy`, `clear-night`, `exceptional`
@@ -572,12 +580,86 @@ forecast (`weather.get_forecasts`, type `daily`):
 - **When.** On subscribe and settings changes, every 30 minutes, and when the
   weather entity changes (at most every 5 minutes).
 
+### At a glance
+
+`attention` is a list of up to 8 rules, each:
+
+```json
+{"entity_id":"sensor.phone_battery","label":"Phone battery","states":[],"below":20,"above":null}
+```
+
+- **Fields.** `entity_id` is required. `label` (up to 48 characters, `""` =
+  the entity's friendly name), `states` (up to 10 strings), `below` and `above`
+  (numbers or null) are optional and stored with these defaults.
+- **Active.** A rule is active when the entity's state is one of `states`
+  (case-insensitive), or is a number `< below` or `> above`. With no states
+  and no threshold, the domain decides: `binary_sensor`, `light`, `switch`,
+  `fan`, `input_boolean` when `on`; `cover`, `valve` when `open`/`opening`;
+  `lock` when `unlocked`/`open`/`opening`/`jammed`; `media_player` when
+  `on`/`playing`; `alarm_control_panel` when `triggered`. Rules for other
+  domains (sensors, persons...) must give states or a threshold, else
+  `invalid_format`. `unavailable` and `unknown` never count.
+- **`attention` event.** `items` lists the active rules in the configured
+  order, at most 6. `text` is `"<label> · <state>"`, the state as a sensor or
+  tile shows it, in the screen's language (`Front door · Open`,
+  `Portão · Aberto`, `Phone battery · 12 %`). The screen elides long texts.
+  `icon` is one of `door`, `window`, `garage`, `lock`, `light`, `power`,
+  `motion`, `water`, `smoke`, `battery`, `thermometer`, `alert`:
+
+  | entity | icon |
+  |---|---|
+  | binary_sensor `door`, `opening` / `window` / `garage_door` / `lock` | `door` / `window` / `garage` / `lock` |
+  | binary_sensor `motion`, `occupancy`, `presence` / `moisture` | `motion` / `water` |
+  | binary_sensor `smoke`, `gas`, `carbon_monoxide` / `battery` / `heat`, `cold` | `smoke` / `battery` / `thermometer` |
+  | binary_sensor `light` / `plug`, `power` | `light` / `power` |
+  | cover `garage`, `gate` / `door` / `window`, `blind`, `shutter`, `curtain`, `shade`, `awning` / other | `garage` / `door` / `window` / `garage` |
+  | lock / light / switch, fan, input_boolean, media_player / valve | `lock` / `light` / `power` / `water` |
+  | sensor `battery` / `temperature` / `moisture` | `battery` / `thermometer` / `water` |
+  | anything else | `alert` |
+
+- **When.** On subscribe, on settings changes, when the screen's language
+  changes, and when a rule's entity changes, only if `items` changed.
+
+### Photo frame
+
+`photo_folder` names a folder in Home Assistant's media folders
+(`homeassistant: media_dirs:`; by default `local` = `/media` in the container
+or `<config>/media`):
+
+- `photos/family`: relative to the `local` media folder (the first one
+  without `local`);
+- `nas:photos/family`: relative to the media folder named `nas`;
+- `/media/photos/family`: an absolute path inside a media folder.
+
+A path that leaves its media folder (`..`, an absolute path elsewhere, a
+symlink pointing out) fails with `invalid_format`; a folder that does not
+exist yet is accepted. Images are `.jpg`, `.jpeg`, `.png` and `.webp` files
+(any case) in the folder and its subfolders, without hidden files and
+symlinks pointing out, at most 5000.
+
+- **`photos` event.** `count` is the number of images; 0 without a folder or
+  when it is missing. Sent on subscribe and settings changes, and after a
+  rescan every 10 minutes when the count changed.
+- **The photo.** `GET <HA base URL>/api/esp32_screen/photo/<screen_id>?w=<width>&h=<height>`
+  with `Authorization: Bearer <access token>` returns the screen's next photo
+  as `image/jpeg`: a **baseline JPEG** (quality 85) of exactly `w`×`h` pixels
+  (`w` clamped to 16-1280, `h` to 16-800), EXIF rotation applied, transparency
+  on black. A photo within 25 % of the screen's aspect ratio fills it and is
+  cropped in the middle; others (a portrait photo on a landscape screen) are
+  shown whole over a blurred copy darkened to 45 %. Header `X-Photo-Index:
+  <i>/<N>` gives its place in the pass. Each request moves on: every screen
+  goes through the photos in its own shuffled order, reshuffled after each
+  pass and when the folder changes. Unreadable files are skipped. `400` for a
+  missing or non-integer `w`/`h`, `401` without a valid token, `404` for an
+  unknown screen or when there are no (readable) photos.
+
 ### Editor command
 
 `esp32_screen/screen/update` (admin only) takes `settings`, a partial object of
 the table above, as well as `name`. Both are optional. A value outside the
 rules fails with `invalid_format`. The `screens` result includes each screen's
-`settings`.
+`settings`. `esp32_screen/photos` (section 4) reports the photo folder's
+count for the editor.
 
 ## 8. Notifications
 

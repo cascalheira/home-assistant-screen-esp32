@@ -281,6 +281,13 @@ BINARY_WORDS: dict[str, tuple[str, str]] = {
     "occupancy": ("Detected", "Clear"),
     "presence": ("Detected", "Clear"),
     "moisture": ("Wet", "Dry"),
+    "smoke": ("Detected", "Clear"),
+    "gas": ("Detected", "Clear"),
+    "carbon_monoxide": ("Detected", "Clear"),
+    "battery": ("Low", "Normal"),
+    "heat": ("Hot", "Normal"),
+    "cold": ("Cold", "Normal"),
+    "lock": ("Unlocked", "Locked"),
 }
 
 MEDIA_VOLUME_SET = 4  # MediaPlayerEntityFeature.VOLUME_SET

@@ -1,6 +1,13 @@
 # Development Home Assistant for the esp32_screen integration.
 # dev/run-ha.sh copies this to dev-config/configuration.yaml.
 
+homeassistant:
+  # `local` is HA's default in Docker; `dev` (dev-config/media, which
+  # run-ha.sh creates) is where e2e.py puts the photo frame's test photos.
+  media_dirs:
+    local: /media
+    dev: /config/media
+
 default_config:
 
 # Demo lights, covers (incl. a garage door), valves, climate, switches, a button.

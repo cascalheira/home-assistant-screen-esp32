@@ -1,4 +1,6 @@
-use esp32_screen_host_tests::logic::pin::{hash, matches, valid, Attempts, BLOCK_SECS, MAX_FAILURES};
+use esp32_screen_host_tests::logic::pin::{
+    hash, matches, valid, Attempts, BLOCK_SECS, MAX_FAILURES,
+};
 
 #[test]
 fn format() {
@@ -12,7 +14,11 @@ fn stored_as_salted_hash() {
     let stored = hash(&salt, "2580");
     assert!(matches(&salt, &stored, "2580"));
     assert!(!matches(&salt, &stored, "2581"));
-    assert_ne!(hash(&[8u8; 16], "2580"), stored, "the salt changes the hash");
+    assert_ne!(
+        hash(&[8u8; 16], "2580"),
+        stored,
+        "the salt changes the hash"
+    );
 }
 
 #[test]

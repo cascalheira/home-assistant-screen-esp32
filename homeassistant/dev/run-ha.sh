@@ -16,7 +16,7 @@ NAME="${ESP32_SCREEN_HA_NAME:-esp32-screen-ha}"
 PORT="${ESP32_SCREEN_HA_PORT:-8123}"
 IMAGE=ghcr.io/home-assistant/home-assistant:stable
 
-mkdir -p "$CONFIG/custom_components/esp32_screen"
+mkdir -p "$CONFIG/custom_components/esp32_screen" "$CONFIG/media"
 cp "$HA_DIR/dev/configuration.yaml" "$CONFIG/configuration.yaml"
 
 # A test RTSP stream for the doorbell camera (rtsp://<host>:18554/doorbell).

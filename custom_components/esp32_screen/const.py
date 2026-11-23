@@ -150,6 +150,24 @@ DOORBELL_TIMEOUT_RANGE: Final = (10, 600)
 # Per-screen settings (docs/protocol.md, section 7).
 LANGUAGES: Final = ("en", "pt")
 
+# Photo frame (docs/protocol.md, section 7): images in a media folder.
+PHOTO_URL: Final = "/api/esp32_screen/photo"
+PHOTO_EXTENSIONS: Final = (".jpg", ".jpeg", ".png", ".webp")
+PHOTO_MAX_FILES: Final = 5000
+PHOTO_RESCAN: Final = 10 * 60  # seconds
+PHOTO_WIDTH: Final = (16, 1280)
+PHOTO_HEIGHT: Final = (16, 800)
+MAX_PHOTO_FOLDER_LEN: Final = 255
+
+# "At a glance" line on the screensaver (docs/protocol.md, section 7).
+MAX_ATTENTION_RULES: Final = 8
+MAX_ATTENTION_ITEMS: Final = 6
+# The glyphs the firmware has for attention items.
+ATTENTION_ICONS: Final = (
+    "door", "window", "garage", "lock", "light", "power", "motion", "water",
+    "smoke", "battery", "thermometer", "alert",
+)
+
 
 def default_settings() -> dict[str, object]:
     """Settings of a screen nobody configured yet."""
@@ -162,4 +180,6 @@ def default_settings() -> dict[str, object]:
         "doorbell_camera": "",
         "doorbell_action": "",
         "doorbell_timeout": DOORBELL_TIMEOUT_DEFAULT,
+        "photo_folder": "",
+        "attention": [],
     }

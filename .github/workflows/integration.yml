@@ -73,6 +73,9 @@ jobs:
       - name: Onboard (random credentials in dev-config/dev-local.json)
         run: uv run --with aiohttp homeassistant/dev/onboard.py
 
+      - name: Unit tests (photo frame, at a glance; run inside the HA container)
+        run: uv run homeassistant/tests/unit.py
+
       - name: End-to-end test
         run: uv run --with aiohttp homeassistant/tests/e2e.py
 

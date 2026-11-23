@@ -82,6 +82,12 @@ pub enum Command {
     DoorbellAction(String),
     /// Debug console: show an MJPEG stream from any URL (no token sent).
     DoorbellTest(String),
+    /// Fetch the next screensaver photo from Home Assistant, at most
+    /// `width` x `height` (answered with `Event::Photo`).
+    FetchPhoto {
+        width: u32,
+        height: u32,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -161,6 +167,12 @@ pub enum Event {
     DoorbellVideoLost(String),
     /// The doorbell's button worked (true) or failed (false, with a reason).
     DoorbellActionDone(bool, String),
+    /// How many photos Home Assistant has for the screensaver (section 7).
+    Photos(u32),
+    /// The photo asked for with `Command::FetchPhoto`.
+    Photo(Result<Picture, String>),
+    /// What needs attention, for the screensaver: (icon key, text).
+    Attention(Vec<(String, String)>),
 }
 
 /// Set by the UI once it shows the last `DoorbellFrame`: the stream decodes
@@ -603,6 +615,13 @@ impl Worker {
                     has_video: true,
                 });
                 self.start_stream(&url, 60, false);
+            }
+            Command::FetchPhoto { width, height } => {
+                let photo = self.fetch_photo(width, height).map_err(|e| {
+                    log::warn!("photo: {e:#}");
+                    format!("{e:#}")
+                });
+                self.emit(Event::Photo(photo));
             }
             Command::NetworkUp => {
                 if matches!(self.phase, Phase::Retry { .. }) {
@@ -1154,6 +1173,27 @@ impl Worker {
                     sunset: crate::logic::clock::parse_hhmm(&text("sunset")),
                 });
             }
+            Some("photos") => {
+                let count = event["count"].as_u64().unwrap_or(0) as u32;
+                log::info!("Home Assistant has {count} photos");
+                self.emit(Event::Photos(count));
+            }
+            Some("attention") => {
+                let items = event["items"]
+                    .as_array()
+                    .map(|items| {
+                        items
+                            .iter()
+                            .map(|item| {
+                                let text = |key: &str| item[key].as_str().unwrap_or("").to_string();
+                                (text("icon"), text("text"))
+                            })
+                            .filter(|(_, text)| !text.is_empty())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                self.emit(Event::Attention(items));
+            }
             other => log::debug!("ignoring screen event {other:?}"),
         }
     }
@@ -1388,6 +1428,36 @@ impl Worker {
         decode_jpeg(data, true)
     }
 
+    /// Downloads the next screensaver photo (a baseline JPEG Home Assistant
+    /// made to fit `width` x `height`) and decodes it.
+    fn fetch_photo(&mut self, width: u32, height: u32) -> Result<Picture> {
+        use anyhow::Context;
+        let Some(base) = self.stored.as_ref().map(|s| s.url.clone()) else {
+            anyhow::bail!("not signed in");
+        };
+        if self.phase != Phase::Live {
+            anyhow::bail!("not connected");
+        }
+        let url = format!(
+            "{base}/api/esp32_screen/photo/{}?w={width}&h={height}",
+            self.screen_id
+        );
+        let mut conn = self.authenticated_get(&url).context("request")?;
+        let mut data = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            let n = conn.read(&mut buf).context("download")?;
+            if n == 0 {
+                break;
+            }
+            data.extend_from_slice(&buf[..n]);
+            if data.len() > 2 * 1024 * 1024 {
+                anyhow::bail!("photo too large");
+            }
+        }
+        decode_jpeg_scaled(data, 0, (width * height) as usize)
+    }
+
     fn download_and_install(
         &mut self,
         url: &str,
@@ -1494,8 +1564,13 @@ fn decode_jpeg(data: Vec<u8>, verbose: bool) -> Result<Picture> {
 /// `decode_jpeg`, reusing `reuse` when it has the right size and nothing
 /// else holds it (no allocation: the doorbell video alternates between two
 /// buffers, which keeps PSRAM from fragmenting).
-fn decode_jpeg_into(mut data: Vec<u8>, verbose: bool, reuse: Option<Picture>) -> Result<Picture> {
-    use esp_idf_svc::sys::{esp, jpeg};
+fn decode_jpeg_into(data: Vec<u8>, verbose: bool, reuse: Option<Picture>) -> Result<Picture> {
+    decode_jpeg_with(data, verbose, reuse, 0, MAX_PICTURE_PIXELS)
+}
+
+/// The size of a JPEG (None: not one the decoder can read).
+pub fn jpeg_size(data: &mut [u8]) -> Option<(u32, u32)> {
+    use esp_idf_svc::sys::jpeg;
     let mut cfg = jpeg::esp_jpeg_image_cfg_t {
         indata: data.as_mut_ptr(),
         indata_size: data.len() as u32,
@@ -1504,10 +1579,43 @@ fn decode_jpeg_into(mut data: Vec<u8>, verbose: bool, reuse: Option<Picture>) ->
         ..Default::default()
     };
     let mut info = jpeg::esp_jpeg_image_output_t::default();
+    let ok = unsafe { jpeg::esp_jpeg_get_image_info(&mut cfg, &mut info) } == 0;
+    ok.then_some((info.width as u32, info.height as u32))
+}
+
+/// Decodes a JPEG reduced by 2^`scale` (0-3), refusing more than
+/// `max_pixels` (after reduction).
+pub fn decode_jpeg_scaled(data: Vec<u8>, scale: u8, max_pixels: usize) -> Result<Picture> {
+    decode_jpeg_with(data, false, None, scale, max_pixels)
+}
+
+fn decode_jpeg_with(
+    mut data: Vec<u8>,
+    verbose: bool,
+    reuse: Option<Picture>,
+    scale: u8,
+    max_pixels: usize,
+) -> Result<Picture> {
+    use esp_idf_svc::sys::{esp, jpeg};
+    let mut cfg = jpeg::esp_jpeg_image_cfg_t {
+        indata: data.as_mut_ptr(),
+        indata_size: data.len() as u32,
+        out_format: jpeg::esp_jpeg_image_format_t_JPEG_IMAGE_FORMAT_RGB888,
+        out_scale: match scale {
+            0 => jpeg::esp_jpeg_image_scale_t_JPEG_IMAGE_SCALE_0,
+            1 => jpeg::esp_jpeg_image_scale_t_JPEG_IMAGE_SCALE_1_2,
+            2 => jpeg::esp_jpeg_image_scale_t_JPEG_IMAGE_SCALE_1_4,
+            _ => jpeg::esp_jpeg_image_scale_t_JPEG_IMAGE_SCALE_1_8,
+        },
+        ..Default::default()
+    };
+    let mut info = jpeg::esp_jpeg_image_output_t::default();
     esp!(unsafe { jpeg::esp_jpeg_get_image_info(&mut cfg, &mut info) })
         .map_err(|e| anyhow::anyhow!("not a JPEG the screen can read ({e})"))?;
-    let (width, height) = (info.width as usize, info.height as usize);
-    if width * height > MAX_PICTURE_PIXELS {
+    // The info has the full size; the decoder divides it.
+    let div = 1usize << scale.min(3);
+    let (width, height) = (info.width as usize / div, info.height as usize / div);
+    if width * height > max_pixels {
         anyhow::bail!("image too large ({width}x{height})");
     }
     let reuse = reuse.filter(|p| p.width() as usize == width && p.height() as usize == height);

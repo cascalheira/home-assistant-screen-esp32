@@ -1,5 +1,6 @@
 //! Backlight brightness and the optional screensaver: a clock (plain or
-//! flip), the weather forecast, or both taking turns.
+//! flip), the weather forecast, photos, taking turns; night mode (only a dim
+//! or red clock, or the screen off); burn-in protection; waking on motion.
 //!
 //! The screensaver starts after a period without touches while the dashboard
 //! is showing, once the time is known (SNTP, timezone from Home Assistant).
@@ -17,9 +18,12 @@ use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault};
 use esp_idf_svc::sys;
 use slint::ComponentHandle;
 
+use crate::board::{LCD_H_RES, LCD_V_RES};
 use crate::display::Backlight;
+use crate::ha::Picture;
 use crate::logic::clock;
-use crate::logic::screensaver::{self as views, View};
+use crate::logic::image;
+use crate::logic::screensaver::{self as views, View, Views};
 use crate::{AppWindow, Page};
 
 const NVS_NAMESPACE: &str = "display";
@@ -40,6 +44,36 @@ const NVS_COLOUR_ICONS: &str = "saver_icons";
 const NVS_UI_LANGUAGE: &str = "ui_lang";
 const NVS_SUNRISE: &str = "sunrise";
 const NVS_SUNSET: &str = "sunset";
+const NVS_PHOTOS: &str = "saver_photo";
+const NVS_SHIFT: &str = "saver_shift";
+const NVS_NIGHT_MODE: &str = "night_mode";
+const NVS_NIGHT_HOURS: &str = "night_hours";
+const NVS_NIGHT_FROM: &str = "night_from";
+const NVS_NIGHT_UNTIL: &str = "night_until";
+const NVS_MOTION: &str = "motion";
+
+/// Night mode: what the idle screen does at night.
+const NIGHT_OFF: u8 = 0;
+const NIGHT_DIM: u8 = 1;
+const NIGHT_RED: u8 = 2;
+const NIGHT_SCREEN_OFF: u8 = 3;
+/// Backlight of the dim and red night clocks (the lowest level).
+const NIGHT_LEVEL: u8 = 1;
+/// Default night hours (minutes since midnight).
+const NIGHT_FROM_DEFAULT: i32 = 23 * 60;
+const NIGHT_UNTIL_DEFAULT: i32 = 7 * 60;
+
+/// How long a new photo takes to fade in.
+const PHOTO_FADE: Duration = Duration::from_millis(900);
+/// Wait this long after a photo failed before asking for another.
+const PHOTO_RETRY: Duration = Duration::from_secs(30);
+/// An unanswered photo request is given up after this.
+const PHOTO_TIMEOUT: Duration = Duration::from_secs(90);
+/// PSRAM left for everything else when sizing photos.
+const PHOTO_RESERVE: usize = 1024 * 1024;
+/// With waking on motion on: the screensaver turns the screen off after this
+/// long without motion.
+const NO_MOTION_OFF: Duration = Duration::from_secs(10 * 60);
 
 /// The delays offered on the settings page.
 const DELAY_OPTIONS: [u32; 3] = [60, 5 * 60, 15 * 60];
@@ -73,6 +107,23 @@ impl ThemeMode {
 /// LIGHT_FROM to LIGHT_UNTIL.
 const LIGHT_FROM: i32 = 7;
 const LIGHT_UNTIL: i32 = 19;
+
+/// Where the next screensaver photo comes from.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PhotoSource {
+    HomeAssistant,
+    SdCard,
+}
+
+/// A photo the screensaver wants (see `Saver::take_photo_request`).
+#[derive(Clone, Copy, Debug)]
+pub struct PhotoRequest {
+    pub source: PhotoSource,
+    /// The size to fill (Home Assistant makes exactly this size).
+    pub target: (u32, u32),
+    /// Most pixels a decoded photo may have.
+    pub max_pixels: u64,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
@@ -135,6 +186,8 @@ pub enum ScreenCommand {
     SaverRotate(u32),
     /// Home Assistant sent a forecast with at least one day (or none).
     ForecastReady(bool),
+    /// How many photos Home Assistant has for the screensaver.
+    PhotosInHa(u32),
     /// Backlight while the brightness slider moves (not saved).
     PreviewBrightness(u8),
     Theme(ThemeMode),
@@ -185,8 +238,41 @@ pub struct Saver {
     language_shown: Option<bool>,
     /// Set when the language changed; taken by the main loop.
     language_changed: Option<bool>,
-    /// Dark on screen and on the screensaver (None until first applied).
-    dark_shown: Option<(bool, bool)>,
+    /// Dark on screen, dark and red on the screensaver (None until first
+    /// applied).
+    dark_shown: Option<(bool, bool, bool)>,
+    /// Photos take turns with the other views.
+    photos: bool,
+    /// Burn-in protection: move the screensaver a little every minute.
+    shift: bool,
+    shift_step: u32,
+    night_mode: u8,
+    /// 0: sunset to sunrise, 1: `night_from` to `night_until`.
+    night_hours: u8,
+    night_from: i32,
+    night_until: i32,
+    /// It is night now and night mode is on (updated every few seconds).
+    night: bool,
+    /// Wake on motion (the camera; boards with one only).
+    motion_wake: bool,
+    has_camera: bool,
+    camera_working: bool,
+    last_motion: Instant,
+    /// The screensaver turned the screen off: nobody moved for a while.
+    nobody_around: bool,
+    ha_photos: u32,
+    sd_photos: usize,
+    /// The next photo, ready to show.
+    photo_next: Option<Picture>,
+    photo_requested: Option<Instant>,
+    photo_failed: Option<Instant>,
+    /// A photo is on the UI (shown or kept for the next fade).
+    photo_shown: bool,
+    photo_since: Instant,
+    fade_started: Option<Instant>,
+    /// The photo size and pixel budget, worked out at the first request
+    /// (None inside: not enough memory for photos).
+    photo_size: Option<Option<((u32, u32), u64)>>,
     /// What auto would show, as last told to the settings page.
     theme_detail_shown: String,
     /// Last time `tick` re-checked the theme (auto changes with the clock).
@@ -244,6 +330,19 @@ impl Saver {
             .and_then(|n| n.get_u32(NVS_ROTATE).ok().flatten())
             .filter(|s| ROTATE_OPTIONS.contains(s))
             .unwrap_or(ROTATE_DEFAULT);
+        let minutes_or = |key, default: i32| {
+            u16_of(key)
+                .map(|m| m as i32)
+                .filter(|m| (0..1440).contains(m))
+                .unwrap_or(default)
+        };
+        let night_from = minutes_or(NVS_NIGHT_FROM, NIGHT_FROM_DEFAULT);
+        let night_until = minutes_or(NVS_NIGHT_UNTIL, NIGHT_UNTIL_DEFAULT);
+        let photos = u8_or(NVS_PHOTOS, 0) == 1;
+        let shift = u8_or(NVS_SHIFT, 0) == 1;
+        let night_mode = u8_or(NVS_NIGHT_MODE, NIGHT_OFF).min(NIGHT_SCREEN_OFF);
+        let night_hours = u8_or(NVS_NIGHT_HOURS, 1).min(1);
+        let motion_wake = u8_or(NVS_MOTION, 0) == 1;
 
         let saver = Rc::new(RefCell::new(Self {
             nvs,
@@ -265,6 +364,28 @@ impl Saver {
             sun_up: None,
             sun_times,
             dark_shown: None,
+            photos,
+            shift,
+            shift_step: 0,
+            night_mode,
+            night_hours,
+            night_from,
+            night_until,
+            night: false,
+            motion_wake,
+            has_camera: false,
+            camera_working: false,
+            last_motion: Instant::now(),
+            nobody_around: false,
+            ha_photos: 0,
+            sd_photos: 0,
+            photo_next: None,
+            photo_requested: None,
+            photo_failed: None,
+            photo_shown: false,
+            photo_since: Instant::now(),
+            fade_started: None,
+            photo_size: None,
             theme_detail_shown: String::new(),
             theme_checked: Instant::now(),
             view: None,
@@ -354,7 +475,101 @@ impl Saver {
                 s.show_settings(&ui);
             }
         });
+        Self::register_more_callbacks(&saver, ui);
         saver
+    }
+
+    fn register_more_callbacks(saver: &Rc<RefCell<Self>>, ui: &AppWindow) {
+        // Each setting: change it, save it, show the settings again.
+        fn on<F: Fn(&mut Saver, i32) + 'static>(
+            saver: &Rc<RefCell<Saver>>,
+            ui: &AppWindow,
+            register: impl FnOnce(&AppWindow, Box<dyn Fn(i32)>),
+            change: F,
+        ) {
+            let weak = ui.as_weak();
+            let s = saver.clone();
+            register(
+                ui,
+                Box::new(move |value| {
+                    let mut s = s.borrow_mut();
+                    change(&mut s, value);
+                    if let Some(ui) = weak.upgrade() {
+                        s.update_night();
+                        s.show_settings(&ui);
+                        s.apply_theme(&ui);
+                    }
+                }),
+            );
+        }
+        on(
+            saver,
+            ui,
+            |ui, f| ui.on_saver_photos_picked(f),
+            |s, i| {
+                s.photos = i == 1;
+                s.save_u8(NVS_PHOTOS, s.photos as u8);
+                s.last_input = Instant::now();
+                if !s.photos {
+                    // Give the memory back.
+                    s.photo_next = None;
+                }
+            },
+        );
+        on(
+            saver,
+            ui,
+            |ui, f| ui.on_saver_shift_picked(f),
+            |s, i| {
+                s.shift = i == 1;
+                s.save_u8(NVS_SHIFT, s.shift as u8);
+            },
+        );
+        on(
+            saver,
+            ui,
+            |ui, f| ui.on_night_mode_picked(f),
+            |s, i| {
+                s.night_mode = i.clamp(0, NIGHT_SCREEN_OFF as i32) as u8;
+                s.save_u8(NVS_NIGHT_MODE, s.night_mode);
+            },
+        );
+        on(
+            saver,
+            ui,
+            |ui, f| ui.on_night_hours_picked(f),
+            |s, i| {
+                s.night_hours = i.clamp(0, 1) as u8;
+                s.save_u8(NVS_NIGHT_HOURS, s.night_hours);
+            },
+        );
+        on(
+            saver,
+            ui,
+            |ui, f| ui.on_night_from_step(f),
+            |s, d| {
+                s.night_from = (s.night_from + d.signum() * 30).rem_euclid(1440);
+                s.save_u16(NVS_NIGHT_FROM, s.night_from as u16);
+            },
+        );
+        on(
+            saver,
+            ui,
+            |ui, f| ui.on_night_until_step(f),
+            |s, d| {
+                s.night_until = (s.night_until + d.signum() * 30).rem_euclid(1440);
+                s.save_u16(NVS_NIGHT_UNTIL, s.night_until as u16);
+            },
+        );
+        on(
+            saver,
+            ui,
+            |ui, f| ui.on_motion_wake_picked(f),
+            |s, i| {
+                s.motion_wake = i == 1;
+                s.save_u8(NVS_MOTION, s.motion_wake as u8);
+            },
+        );
     }
 
     fn show_settings(&self, ui: &AppWindow) {
@@ -372,10 +587,105 @@ impl Saver {
         ui.set_display_theme(self.theme as i32);
         ui.set_saver_theme(self.saver_theme as i32);
         ui.set_saver_colour_icons(self.colour_icons);
-        ui.global::<crate::SaverTheme>().set_colour_icons(self.colour_icons);
+        ui.global::<crate::SaverTheme>()
+            .set_colour_icons(self.colour_icons);
         ui.set_display_language(self.ui_language as i32);
         let index = ROTATE_OPTIONS.iter().position(|&s| s == self.rotate_secs);
         ui.set_saver_rotate(index.map(|i| i as i32).unwrap_or(-1));
+        ui.set_saver_photos(self.photos);
+        ui.set_saver_photos_detail(self.photos_detail().as_str().into());
+        ui.set_photo_title(tr("No photos").into());
+        ui.set_photo_hint(self.photos_detail().as_str().into());
+        ui.set_saver_shift(self.shift);
+        ui.set_night_mode(self.night_mode as i32);
+        ui.set_night_hours(self.night_hours as i32);
+        ui.set_night_from(clock::hhmm(self.night_from).as_str().into());
+        ui.set_night_until(clock::hhmm(self.night_until).as_str().into());
+        ui.set_night_detail(self.night_detail().as_str().into());
+        ui.set_has_camera(self.has_camera);
+        ui.set_motion_wake(self.motion_wake);
+        ui.set_motion_detail(
+            if self.camera_working {
+                tr("Wakes the screen when someone moves in front of it. After 10 minutes without anyone around, the screensaver turns the screen off. The camera's pictures never leave the screen and are not stored.")
+            } else {
+                tr("The camera isn't working.")
+            }
+            .into(),
+        );
+    }
+
+    /// Where the photos come from, for the settings page.
+    fn photos_detail(&self) -> String {
+        if self.photo_size == Some(None) {
+            return tr("This screen doesn't have enough free memory for photos.").into();
+        }
+        if self.ha_photos > 0 {
+            trf("{} photos from Home Assistant.", &[&self.ha_photos])
+        } else if self.sd_photos > 0 {
+            trf("{} photos from the SD card.", &[&self.sd_photos])
+        } else {
+            tr("No photos yet. Choose a photo folder for this screen in Home Assistant, or put JPEG photos in a folder called photos on the SD card.").into()
+        }
+    }
+
+    /// When the night is and what happens then, for the settings page.
+    fn night_detail(&self) -> String {
+        if self.night_mode == NIGHT_OFF {
+            return tr("The screensaver looks the same day and night.").into();
+        }
+        let (from, until) = self.night_window();
+        let when = if self.night_hours == 0 && self.sun_times.is_none() {
+            trf(
+                "From {} to {} until Home Assistant sends sunset and sunrise.",
+                &[
+                    &clock::hhmm(from) as &dyn std::fmt::Display,
+                    &clock::hhmm(until) as &dyn std::fmt::Display,
+                ],
+            )
+        } else {
+            trf(
+                "From {} to {}.",
+                &[
+                    &clock::hhmm(from) as &dyn std::fmt::Display,
+                    &clock::hhmm(until) as &dyn std::fmt::Display,
+                ],
+            )
+        };
+        let what = match self.night_mode {
+            NIGHT_DIM => {
+                tr("When nobody uses the screen, it shows only the clock, as dim as it goes.")
+            }
+            NIGHT_RED => tr("When nobody uses the screen, it shows only the clock, in dim red."),
+            _ => tr("When nobody uses the screen, it turns off. A touch turns it on."),
+        };
+        format!("{when} {what}")
+    }
+
+    /// The night: (from, until) in minutes since midnight.
+    fn night_window(&self) -> (i32, i32) {
+        if self.night_hours == 1 {
+            return (self.night_from, self.night_until);
+        }
+        match self.sun_times {
+            Some((rise, set)) => (set, rise),
+            None => (LIGHT_UNTIL * 60, LIGHT_FROM * 60),
+        }
+    }
+
+    /// Re-checks whether it is night (night mode on and within its hours).
+    fn update_night(&mut self) {
+        let (from, until) = self.night_window();
+        self.night = self.night_mode != NIGHT_OFF
+            && local_time()
+                .is_some_and(|t| views::is_night(t.tm_hour * 60 + t.tm_min, from, until));
+    }
+
+    fn save_u16(&mut self, key: &str, value: u16) {
+        if let Some(nvs) = &mut self.nvs {
+            if let Err(e) = nvs.set_u16(key, value) {
+                log::warn!("saving display setting {key} failed: {e}");
+            }
+        }
     }
 
     fn set_weather(&mut self, on: bool) {
@@ -438,15 +748,27 @@ impl Saver {
             ThemeMode::Dark => true,
             ThemeMode::Auto => !day,
         };
-        let shown = (dark_for(self.theme), dark_for(self.saver_theme));
+        let night = self.active && self.night;
+        let shown = (
+            dark_for(self.theme),
+            night || dark_for(self.saver_theme),
+            night && self.night_mode == NIGHT_RED,
+        );
         if self.dark_shown != Some(shown) {
             log::info!(
                 "{} theme, {} screensaver",
                 if shown.0 { "dark" } else { "light" },
-                if shown.1 { "dark" } else { "light" }
+                if shown.2 {
+                    "red"
+                } else if shown.1 {
+                    "dark"
+                } else {
+                    "light"
+                }
             );
             ui.global::<crate::Theme>().set_dark(shown.0);
             ui.global::<crate::SaverTheme>().set_dark(shown.1);
+            ui.global::<crate::SaverTheme>().set_red(shown.2);
             self.dark_shown = Some(shown);
         }
         if detail != self.theme_detail_shown {
@@ -490,15 +812,32 @@ impl Saver {
 
     /// Some screensaver is turned on.
     fn enabled(&self) -> bool {
-        self.mode != Mode::Off || self.weather
+        self.mode != Mode::Off || self.weather || self.photos
+    }
+
+    /// The screensaver should start when idle: one is on, or it is night
+    /// and night mode is on.
+    fn wanted(&self) -> bool {
+        self.enabled() || self.night
     }
 
     /// The view to show now; None = stop.
     fn wanted_view(&self) -> Option<View> {
+        if self.night || self.nobody_around {
+            if self.night_mode == NIGHT_SCREEN_OFF || self.nobody_around {
+                return Some(View::Blank);
+            }
+            return Some(View::Clock);
+        }
         views::view(
-            self.mode != Mode::Off || self.forced,
-            self.weather,
-            self.forecast_ready,
+            Views {
+                clock: self.mode != Mode::Off || self.forced,
+                forecast: self.weather,
+                forecast_ready: self.forecast_ready,
+                photos: self.photos,
+                photo_ready: self.photo_next.is_some()
+                    || (self.view == Some(View::Photo) && self.photo_shown),
+            },
             self.view,
             self.view_since.elapsed().as_secs(),
             self.rotate_secs as u64,
@@ -512,7 +851,151 @@ impl Saver {
             ui.set_saver_view(match view {
                 View::Clock => 0,
                 View::Forecast => 1,
+                View::Photo => 2,
+                View::Blank => 3,
             });
+            if view == View::Photo {
+                self.present_photo(ui);
+            }
+        }
+    }
+
+    // ---- Photos
+
+    /// Photo counts: Home Assistant's comes with `ScreenCommand::PhotosInHa`.
+    pub fn set_sd_photos(&mut self, count: usize, ui: &AppWindow) {
+        self.sd_photos = count;
+        self.show_settings(ui);
+    }
+
+    /// The next photo to fetch, when one is wanted now.
+    pub fn take_photo_request(&mut self) -> Option<PhotoRequest> {
+        if !self.photos || self.photo_next.is_some() || self.fade_started.is_some() {
+            return None;
+        }
+        if self
+            .photo_requested
+            .is_some_and(|at| at.elapsed() < PHOTO_TIMEOUT)
+            || self
+                .photo_failed
+                .is_some_and(|at| at.elapsed() < PHOTO_RETRY)
+        {
+            return None;
+        }
+        let source = if self.ha_photos > 0 {
+            PhotoSource::HomeAssistant
+        } else if self.sd_photos > 0 {
+            PhotoSource::SdCard
+        } else {
+            return None;
+        };
+        let (target, max_pixels) = (*self.photo_size.get_or_insert_with(|| {
+            // Two photos are in memory while one fades into the other.
+            let largest = unsafe { sys::heap_caps_get_largest_free_block(sys::MALLOC_CAP_SPIRAM) };
+            let budget = (largest.saturating_sub(PHOTO_RESERVE) / 3 / 2) as u64;
+            let size = image::photo_box((LCD_H_RES as u32, LCD_V_RES as u32), budget)
+                .map(|size| (size, budget));
+            log::info!("photo size {size:?} ({largest} B of PSRAM free)");
+            size
+        }))?;
+        self.photo_requested = Some(Instant::now());
+        Some(PhotoRequest {
+            source,
+            target,
+            max_pixels,
+        })
+    }
+
+    /// The answer to a photo request.
+    pub fn photo_arrived(&mut self, photo: Result<Picture, String>, ui: &AppWindow) {
+        self.photo_requested = None;
+        match photo {
+            Ok(picture) if self.photos => {
+                self.photo_failed = None;
+                self.photo_next = Some(picture);
+                if self.active && self.view == Some(View::Photo) && !self.photo_shown {
+                    self.present_photo(ui);
+                }
+            }
+            Ok(_) => {}
+            Err(_) => self.photo_failed = Some(Instant::now()),
+        }
+    }
+
+    /// Shows the next photo, fading in over the current one.
+    fn present_photo(&mut self, ui: &AppWindow) {
+        let Some(picture) = self.photo_next.take() else {
+            return;
+        };
+        let fill = image::photo_fills(
+            picture.width(),
+            picture.height(),
+            (LCD_H_RES as u32, LCD_V_RES as u32),
+        );
+        if self.photo_shown {
+            ui.set_saver_photo_prev(ui.get_saver_photo());
+            ui.set_saver_photo_prev_fill(ui.get_saver_photo_fill());
+            ui.set_saver_photo_has_prev(true);
+        }
+        ui.set_saver_photo(slint::Image::from_rgb8(picture));
+        ui.set_saver_photo_fill(fill);
+        ui.set_saver_photo_has(true);
+        ui.set_saver_photo_fade(0.0);
+        self.fade_started = Some(Instant::now());
+        self.photo_shown = true;
+        self.photo_since = Instant::now();
+    }
+
+    fn animate_fade(&mut self, ui: &AppWindow) {
+        let Some(start) = self.fade_started else {
+            return;
+        };
+        let t = start.elapsed().as_secs_f32() / PHOTO_FADE.as_secs_f32();
+        if t >= 1.0 {
+            self.fade_started = None;
+            ui.set_saver_photo_fade(1.0);
+            // The old photo's memory goes back before the next one is fetched.
+            ui.set_saver_photo_has_prev(false);
+            ui.set_saver_photo_prev(slint::Image::default());
+        } else {
+            ui.set_saver_photo_fade(t);
+        }
+    }
+
+    /// Drops the photos on screen (the screensaver stopped).
+    fn clear_photos(&mut self, ui: &AppWindow) {
+        self.photo_shown = false;
+        self.fade_started = None;
+        ui.set_saver_photo_has(false);
+        ui.set_saver_photo_has_prev(false);
+        ui.set_saver_photo(slint::Image::default());
+        ui.set_saver_photo_prev(slint::Image::default());
+    }
+
+    // ---- Motion
+
+    /// The board has a camera (`working`: it started).
+    #[cfg_attr(not(esp32p4), allow(dead_code))]
+    pub fn set_camera(&mut self, working: bool, ui: &AppWindow) {
+        self.has_camera = true;
+        self.camera_working = working;
+        self.show_settings(ui);
+    }
+
+    /// Whether the camera should look for motion now.
+    #[cfg_attr(not(esp32p4), allow(dead_code))]
+    pub fn motion_wanted(&self) -> bool {
+        self.has_camera && self.camera_working && self.motion_wake && self.active
+    }
+
+    /// The camera saw someone move.
+    #[cfg_attr(not(esp32p4), allow(dead_code))]
+    pub fn on_motion(&mut self, ui: &AppWindow, backlight: &mut Backlight) {
+        self.last_motion = Instant::now();
+        if self.motion_wanted() {
+            log::info!("woken by motion");
+            self.last_input = Instant::now();
+            self.stop(ui, backlight);
         }
     }
 
@@ -540,12 +1023,21 @@ impl Saver {
         self.last_input = Instant::now();
     }
 
-    fn backlight_level(&self) -> u8 {
-        if self.active {
-            self.brightness.min(BRIGHTNESS_SAVER)
-        } else {
-            self.brightness
+    /// The backlight for the current state (0-100).
+    pub fn backlight_level(&self) -> u8 {
+        if !self.active {
+            return self.brightness;
         }
+        if self.nobody_around {
+            return 0;
+        }
+        if self.night {
+            return match self.night_mode {
+                NIGHT_SCREEN_OFF => 0,
+                _ => self.brightness.min(NIGHT_LEVEL),
+            };
+        }
+        self.brightness.min(BRIGHTNESS_SAVER)
     }
 
     /// Backlight level for the current state (used once the first frame is up).
@@ -596,6 +1088,15 @@ impl Saver {
                 self.show_settings(ui);
             }
             ScreenCommand::ForecastReady(ready) => self.forecast_ready = ready,
+            ScreenCommand::PhotosInHa(count) => {
+                if count != self.ha_photos {
+                    self.ha_photos = count;
+                    // A different folder: start from its photos.
+                    self.photo_next = None;
+                    self.photo_failed = None;
+                    self.show_settings(ui);
+                }
+            }
             ScreenCommand::ClearPin => {}
             ScreenCommand::PreviewBrightness(value) => backlight.set(value.clamp(1, 100)),
             ScreenCommand::Theme(theme) => {
@@ -619,6 +1120,7 @@ impl Saver {
                         }
                     }
                 }
+                self.update_night();
                 self.apply_theme(ui);
             }
             ScreenCommand::Wake => {
@@ -690,7 +1192,7 @@ impl Saver {
 
     /// Starts the screensaver now if it is enabled and the time is known.
     pub fn start_now(&mut self, ui: &AppWindow, backlight: &mut Backlight) {
-        if self.enabled() {
+        if self.wanted() {
             self.start(ui, backlight);
         }
     }
@@ -703,10 +1205,15 @@ impl Saver {
         ui.set_sheet_open(false);
         ui.set_saver_flip(self.mode == Mode::Flip);
         self.view = None;
+        self.update_night();
+        self.nobody_around = false;
+        self.last_motion = Instant::now();
         let Some(view) = self.wanted_view() else {
             return;
         };
+        self.active = true;
         self.show_view(ui, view);
+        self.apply_shift(ui);
         // Show the current time without flipping into it.
         let digits = self.digits_of(&now);
         for (i, d) in digits.iter().enumerate() {
@@ -720,7 +1227,7 @@ impl Saver {
         ui.set_clock_date(self.date_text(&now).into());
         ui.set_clock_time(clock::time_text(now.tm_hour, now.tm_min, self.h24).into());
         ui.set_saver_active(true);
-        self.active = true;
+        self.apply_theme(ui);
         self.apply_backlight(backlight);
     }
 
@@ -729,19 +1236,41 @@ impl Saver {
         ui.set_saver_active(false);
         self.active = false;
         self.forced = false;
+        self.nobody_around = false;
         self.view = None;
+        self.clear_photos(ui);
+        self.apply_theme(ui);
         self.apply_backlight(backlight);
+    }
+
+    /// Moves the screensaver to the current burn-in step (or back to the
+    /// middle when the protection is off).
+    fn apply_shift(&self, ui: &AppWindow) {
+        let (x, y) = if self.shift {
+            views::shift(self.shift_step)
+        } else {
+            (0, 0)
+        };
+        ui.set_saver_shift_x(x as f32);
+        ui.set_saver_shift_y(y as f32);
     }
 
     /// Call from the UI loop.
     pub fn tick(&mut self, ui: &AppWindow, backlight: &mut Backlight) {
         if self.theme_checked.elapsed() >= Duration::from_secs(5) {
             self.theme_checked = Instant::now();
+            let was_night = self.night;
+            self.update_night();
             self.apply_theme(ui);
+            if self.night != was_night {
+                log::info!("night {}", if self.night { "began" } else { "ended" });
+                self.apply_backlight(backlight);
+                self.show_settings(ui);
+            }
         }
         if !self.active {
             let idle = self.last_input.elapsed() >= Duration::from_secs(self.delay_secs as u64);
-            if self.enabled() && idle && !self.swallowing && ui.get_page() == Page::Dashboard {
+            if self.wanted() && idle && !self.swallowing && ui.get_page() == Page::Dashboard {
                 self.start(ui, backlight);
             }
             return;
@@ -750,11 +1279,27 @@ impl Saver {
             // Turned on again after a forced start: no longer forced.
             self.forced = false;
         }
+        if self.motion_wanted()
+            && !self.nobody_around
+            && self.last_motion.elapsed() >= NO_MOTION_OFF
+        {
+            log::info!("nobody around: screen off");
+            self.nobody_around = true;
+            self.apply_backlight(backlight);
+        }
         let Some(view) = self.wanted_view() else {
             self.stop(ui, backlight);
             return;
         };
         self.show_view(ui, view);
+        if view == View::Photo
+            && self.photo_next.is_some()
+            && self.photo_since.elapsed() >= Duration::from_secs(self.rotate_secs as u64)
+        {
+            // Photos alone: the next one.
+            self.present_photo(ui);
+        }
+        self.animate_fade(ui);
         ui.set_saver_flip(self.mode == Mode::Flip);
         self.animate_flips(ui);
         let Some(now) = local_time() else { return };
@@ -763,6 +1308,8 @@ impl Saver {
             return;
         }
         self.shown_minute = Some(minute);
+        self.shift_step = self.shift_step.wrapping_add(1);
+        self.apply_shift(ui);
         for (i, d) in self.digits_of(&now).iter().enumerate() {
             self.set_digit(ui, i, *d);
         }

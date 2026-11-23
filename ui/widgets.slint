@@ -515,3 +515,51 @@ export component SettingRow inherits HorizontalLayout {
     }
     @children
 }
+
+component StepButton inherits Rectangle {
+    in property <string> glyph;
+    in property <bool> enabled: true;
+    callback clicked();
+    width: 52px;
+    height: 44px;
+    border-radius: 10px;
+    background: ta.pressed ? Theme.surface-3 : Theme.surface-2;
+    Text {
+        text: root.glyph;
+        font-family: "Material Design Icons";
+        font-size: 24px;
+        color: root.enabled ? Theme.text : Theme.muted;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+// A time of day with buttons for half an hour earlier and later.
+export component TimeStepper inherits HorizontalLayout {
+    in property <string> value;
+    in property <bool> enabled: true;
+    callback step(int);
+    spacing: 8px;
+    StepButton {
+        glyph: "\u{F0374}";
+        enabled: root.enabled;
+        clicked => { root.step(-1); }
+    }
+    Text {
+        width: 84px;
+        text: root.value;
+        font-size: 20px;
+        color: root.enabled ? Theme.text : Theme.muted;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    StepButton {
+        glyph: "\u{F0415}";
+        enabled: root.enabled;
+        clicked => { root.step(1); }
+    }
+}

@@ -37,6 +37,6 @@ direct_dependencies:
 - espressif/esp_jpeg
 - espressif/esp_websocket_client
 - espressif/mdns
-manifest_hash: 8ea8f4701237aabf1daa91e830209f779fbf197200f59abfc880b79dcb03ee7b
+manifest_hash: 6ce48db4d0040f1025e9cc22c0a9cc2b0eb8eb22cc70252d37b8d8fc3e2f80ff
 target: esp32s3
 version: 2.0.0

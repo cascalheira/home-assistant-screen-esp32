@@ -20,6 +20,9 @@ fn main() {
         // European Portuguese (ui/translations/pt), picked at runtime.
         .with_bundled_translations("ui/translations")
         .with_default_translation_context(slint_build::DefaultTranslationContext::None)
-        .with_library_paths(std::collections::HashMap::from([("board".to_string(), board)]));
+        .with_library_paths(std::collections::HashMap::from([(
+            "board".to_string(),
+            board,
+        )]));
     slint_build::compile_with_config("ui/app.slint", config).expect("Slint UI failed to compile");
 }

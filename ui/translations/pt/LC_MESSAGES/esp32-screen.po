@@ -297,3 +297,42 @@ msgstr "Simples"
 
 msgid "Colour"
 msgstr "Cor"
+
+msgid "Night"
+msgstr "Noite"
+
+msgid "Photos"
+msgstr "Fotografias"
+
+msgid "Prevent burn-in"
+msgstr "Evitar marcas"
+
+msgid "Moves the clock and the forecast by a few pixels every minute, so they don't leave a shadow on the screen."
+msgstr "Desloca o relógio e a previsão alguns píxeis a cada minuto, para não deixarem sombra no ecrã."
+
+msgid "At night"
+msgstr "À noite"
+
+msgid "Dim"
+msgstr "Ténue"
+
+msgid "Red"
+msgstr "Vermelho"
+
+msgid "Screen off"
+msgstr "Ecrã desligado"
+
+msgid "Sunset to sunrise"
+msgstr "Do pôr ao nascer do sol"
+
+msgid "Set hours"
+msgstr "Horas fixas"
+
+msgid "From"
+msgstr "Das"
+
+msgid "Until"
+msgstr "Até às"
+
+msgid "Wake on motion"
+msgstr "Acordar com movimento"

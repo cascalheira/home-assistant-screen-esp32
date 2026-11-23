@@ -3,7 +3,9 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use esp32_screen_host_tests::icons::{light_glyph, page_glyph, LIGHT_ICONS, PAGE_ICONS};
+use esp32_screen_host_tests::icons::{
+    light_glyph, page_glyph, ATTENTION_ICONS, LIGHT_ICONS, PAGE_ICONS,
+};
 
 fn repo_file(path: &str) -> String {
     let full = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join(path);
@@ -27,7 +29,11 @@ fn icons_are_compiled_into_the_ui() {
         .find("if root.glyph-coverage: Text")
         .expect("glyph-coverage text");
     let coverage = escapes(&slint[start..start + slint[start..].find(';').unwrap()]);
-    let icons: Vec<_> = PAGE_ICONS.iter().chain(LIGHT_ICONS).collect();
+    let icons: Vec<_> = PAGE_ICONS
+        .iter()
+        .chain(LIGHT_ICONS)
+        .chain(ATTENTION_ICONS)
+        .collect();
     assert!(icons.len() > 40);
     for (name, glyph) in icons {
         let cp = glyph.chars().next().unwrap() as u32;

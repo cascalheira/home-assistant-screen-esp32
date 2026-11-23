@@ -1,12 +1,12 @@
 //! The ESP32-P4 board, Guition JC1060P470C: an ESP32-P4 (32 MB PSRAM, 16 MB flash) with a
 //! 1024x600 MIPI-DSI panel (JD9165), GT911 touch, an ESP32-C6 for Wi-Fi over
-//! SDIO, an ES8311 audio codec, a camera connector, Ethernet and an SD slot.
+//! SDIO, an ES8311 audio codec, an OV02C10 camera, Ethernet and an SD slot.
 //!
 //! Pins come from the factory firmware's boot log (an Espressif ESP-Brookesia
 //! demo built on the ESP32-P4 Function EV board support package): backlight
 //! on GPIO23, Wi-Fi SDIO on GPIO14-19 with the C6's reset on GPIO54 (set in
-//! sdkconfig.defaults.esp32p4). Touch is on I2C; its pins are found by
-//! probing at start-up (see `find_touch`).
+//! sdkconfig.defaults.esp32p4). Touch and the camera's control share one I2C
+//! bus (GPIO7/8), as in Guition's demos.
 
 // ---- Display (MIPI-DSI, 2 lanes, RGB565) --------------------------------------
 
@@ -165,23 +165,24 @@ pub const LCD_INIT_COMMANDS: &[(u8, &[u8], u32)] = &[
     (0x29, &[0x00], 20),
 ];
 
-// ---- Touch (GT911 on I2C) ----------------------------------------------------
-// The I2C pins are not in the factory log. These pairs are tried in order;
-// the first is the ESP32-P4 Function EV board's.
-const TOUCH_I2C_CANDIDATES: [(i32, i32); 4] = [(7, 8), (8, 7), (31, 32), (32, 31)];
+// ---- Touch (GT911) and camera (OV02C10) on I2C ---------------------------
+// One bus, through ESP-IDF's I2C master driver: the camera driver needs it,
+// and it can't be mixed with the older driver esp-idf-hal uses.
+const I2C_SDA: i32 = 7;
+const I2C_SCL: i32 = 8;
 
 // ---- Buttons -------------------------------------------------------------------
 // BOOT button: GPIO35, active low.
 
-use esp_idf_svc::hal::gpio::{AnyIOPin, PinDriver, Pull};
-use esp_idf_svc::hal::i2c::{I2cConfig, I2cDriver, I2C0};
+use esp_idf_svc::hal::gpio::{PinDriver, Pull};
 use esp_idf_svc::hal::ledc::{config::TimerConfig, LedcDriver, LedcTimerDriver, Resolution};
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::hal::units::FromValueType;
+use esp_idf_svc::sys::{self, esp, EspError};
 
 use super::Hardware;
 use crate::display::{Backlight, Display};
-use crate::touch::Touch;
+use crate::touch::{Touch, TouchBus};
 
 /// Brings up the board's hardware.
 pub fn init(p: Peripherals) -> anyhow::Result<Hardware> {
@@ -197,7 +198,11 @@ pub fn init(p: Peripherals) -> anyhow::Result<Hardware> {
     backlight.set(0);
 
     let display = super::on_core0(Display::new)?;
-    let touch = find_touch()?;
+    let bus = MasterBus::new(I2C_SDA, I2C_SCL)?;
+    let found: Vec<u8> = (0x08u8..0x78).filter(|&a| bus.probe(a)).collect();
+    log::info!("I2C SDA={I2C_SDA} SCL={I2C_SCL}: devices {found:02X?}");
+    CAMERA_BUS.store(bus.bus.cast(), core::sync::atomic::Ordering::Release);
+    let touch = Touch::new(bus, None)?;
     let boot_button = PinDriver::input(p.pins.gpio35, Pull::Up)?;
     let sd_card = match crate::sd::SdCard::mount_sdmmc() {
         Ok(card) => Some(card),
@@ -217,39 +222,73 @@ pub fn init(p: Peripherals) -> anyhow::Result<Hardware> {
     })
 }
 
-/// Tries the candidate I2C pin pairs until a GT911 answers, logging what
-/// each bus holds (the audio codec at 0x18 also tells the bus apart).
-fn find_touch() -> anyhow::Result<Touch> {
-    for (sda, scl) in TOUCH_I2C_CANDIDATES {
-        // SAFETY: I2C0 and these pins are used by nothing else; each try's
-        // driver is dropped (releasing them) before the next.
-        let i2c = unsafe {
-            I2cDriver::new(
-                I2C0::steal(),
-                AnyIOPin::steal(sda as u8),
-                AnyIOPin::steal(scl as u8),
-                &I2cConfig::new().baudrate(400.kHz().into()),
-            )
+/// The bus handle, for the camera (`crate::camera`).
+pub static CAMERA_BUS: core::sync::atomic::AtomicPtr<core::ffi::c_void> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+/// ESP-IDF's I2C master bus, with a device handle per address used.
+pub struct MasterBus {
+    bus: sys::i2c_master_bus_handle_t,
+    devices: Vec<(u8, sys::i2c_master_dev_handle_t)>,
+}
+
+impl MasterBus {
+    fn new(sda: i32, scl: i32) -> Result<Self, EspError> {
+        let mut config = sys::i2c_master_bus_config_t {
+            i2c_port: 0,
+            sda_io_num: sda,
+            scl_io_num: scl,
+            glitch_ignore_cnt: 7,
+            ..Default::default()
         };
-        let Ok(mut i2c) = i2c else { continue };
-        let found: Vec<u8> = (0x08u8..0x78)
-            .filter(|&addr| i2c.write(addr, &[], 5).is_ok())
-            .collect();
-        log::info!("I2C SDA={sda} SCL={scl}: devices {found:02X?}");
-        if found.contains(&0x5D) || found.contains(&0x14) {
-            log::info!("touch controller on SDA={sda} SCL={scl}");
-            return Ok(Touch::new(i2c, None)?);
-        }
+        config.__bindgen_anon_1.clk_source = sys::soc_periph_i2c_clk_src_t_I2C_CLK_SRC_DEFAULT;
+        config.flags.set_enable_internal_pullup(1);
+        let mut bus: sys::i2c_master_bus_handle_t = core::ptr::null_mut();
+        esp!(unsafe { sys::i2c_new_master_bus(&config, &mut bus) })?;
+        Ok(Self {
+            bus,
+            devices: Vec::new(),
+        })
     }
-    log::error!("no GT911 found on the candidate I2C pins");
-    // A touch-less screen still shows the dashboard.
-    let i2c = unsafe {
-        I2cDriver::new(
-            I2C0::steal(),
-            AnyIOPin::steal(TOUCH_I2C_CANDIDATES[0].0 as u8),
-            AnyIOPin::steal(TOUCH_I2C_CANDIDATES[0].1 as u8),
-            &I2cConfig::new().baudrate(400.kHz().into()),
-        )?
-    };
-    Ok(Touch::new(i2c, None)?)
+
+    fn probe(&self, addr: u8) -> bool {
+        unsafe { sys::i2c_master_probe(self.bus, addr as u16, 20) == sys::ESP_OK }
+    }
+
+    fn device(&mut self, addr: u8) -> Result<sys::i2c_master_dev_handle_t, EspError> {
+        if let Some((_, dev)) = self.devices.iter().find(|(a, _)| *a == addr) {
+            return Ok(*dev);
+        }
+        let config = sys::i2c_device_config_t {
+            dev_addr_length: sys::i2c_addr_bit_len_t_I2C_ADDR_BIT_LEN_7,
+            device_address: addr as u16,
+            scl_speed_hz: 400_000,
+            ..Default::default()
+        };
+        let mut dev: sys::i2c_master_dev_handle_t = core::ptr::null_mut();
+        esp!(unsafe { sys::i2c_master_bus_add_device(self.bus, &config, &mut dev) })?;
+        self.devices.push((addr, dev));
+        Ok(dev)
+    }
+}
+
+impl TouchBus for MasterBus {
+    fn write_read(&mut self, addr: u8, bytes: &[u8], buf: &mut [u8]) -> Result<(), EspError> {
+        let dev = self.device(addr)?;
+        esp!(unsafe {
+            sys::i2c_master_transmit_receive(
+                dev,
+                bytes.as_ptr(),
+                bytes.len(),
+                buf.as_mut_ptr(),
+                buf.len(),
+                50,
+            )
+        })
+    }
+
+    fn write(&mut self, addr: u8, bytes: &[u8]) -> Result<(), EspError> {
+        let dev = self.device(addr)?;
+        esp!(unsafe { sys::i2c_master_transmit(dev, bytes.as_ptr(), bytes.len(), 50) })
+    }
 }

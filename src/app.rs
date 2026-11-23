@@ -167,6 +167,8 @@ pub struct App {
     wifi_events: Receiver<wifi::Event>,
     ha_events: Receiver<ha::Event>,
     updates: Receiver<crate::ota::Status>,
+    /// A screensaver photo from Home Assistant, for the main loop.
+    photo: RefCell<Option<Result<ha::Picture, String>>>,
 }
 
 struct Shared {
@@ -290,6 +292,7 @@ impl App {
             wifi_events: wifi.events,
             ha_events: ha.events,
             updates,
+            photo: RefCell::new(None),
         }
     }
 
@@ -324,6 +327,12 @@ impl App {
                         });
                     self.shared.on_ha_event(event);
                 }
+                ha::Event::Photos(count) => {
+                    self.screen_commands
+                        .borrow_mut()
+                        .push(crate::saver::ScreenCommand::PhotosInHa(count));
+                }
+                ha::Event::Photo(photo) => *self.photo.borrow_mut() = Some(photo),
                 ha::Event::Forecast(forecast) => {
                     self.screen_commands.borrow_mut().push(
                         crate::saver::ScreenCommand::ForecastReady(!forecast.days.is_empty()),
@@ -399,6 +408,18 @@ impl App {
         if self.shared.lock.borrow_mut().lock() {
             log::info!("locked");
         }
+    }
+
+    /// Asks Home Assistant for the next screensaver photo (the answer comes
+    /// from `take_photo`).
+    pub fn request_photo(&self, width: u32, height: u32) {
+        self.shared
+            .ha
+            .send(ha::Command::FetchPhoto { width, height });
+    }
+
+    pub fn take_photo(&self) -> Option<Result<ha::Picture, String>> {
+        self.photo.borrow_mut().take()
     }
 
     /// Display commands received since the last call.
@@ -1351,8 +1372,24 @@ impl Shared {
                     self.close_notification();
                 }
             }
+            ha::Event::Attention(items) => {
+                let shown: Vec<crate::AttentionItem> = items
+                    .iter()
+                    .take(3)
+                    .map(|(icon, text)| crate::AttentionItem {
+                        glyph: crate::icons::attention_glyph(icon).into(),
+                        text: text.as_str().into(),
+                    })
+                    .collect();
+                ui.set_attention_more(items.len().saturating_sub(3) as i32);
+                ui.set_attention(ModelRc::new(VecModel::from(shown)));
+            }
             // Routed to the main loop by App::poll.
-            ha::Event::Command(_) | ha::Event::Settings { .. } | ha::Event::Forecast(_) => {}
+            ha::Event::Command(_)
+            | ha::Event::Settings { .. }
+            | ha::Event::Forecast(_)
+            | ha::Event::Photos(_)
+            | ha::Event::Photo(_) => {}
         }
     }
 

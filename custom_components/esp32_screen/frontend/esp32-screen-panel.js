@@ -85,6 +85,27 @@ const normLayout = (layout) => ({
 });
 
 const SENSOR_FIELDS = ["temperature_entity", "humidity_entity"];
+// "At a glance" rules (attention.py): states that need attention when a rule
+// lists no states and no threshold. Other domains need one of those.
+const GLANCE_DEFAULTS = {
+  binary_sensor: ["on"], cover: ["open", "opening"], valve: ["open", "opening"],
+  lock: ["unlocked", "open", "opening", "jammed"], light: ["on"], switch: ["on"], fan: ["on"],
+  input_boolean: ["on"], media_player: ["on", "playing"], alarm_control_panel: ["triggered"],
+};
+const GLANCE_MAX = 8;
+const GLANCE_NUMERIC = ["sensor", "input_number", "number"];
+const glanceStates = (text) => String(text || "").split(",").map((x) => x.trim()).filter(Boolean);
+const glanceValid = (r) => !!r.entity_id && (GLANCE_DEFAULTS[r.entity_id.split(".")[0]] || r.states.length || r.below !== null || r.above !== null);
+const glanceActive = (r, s) => {
+  if (!s || s.state === "unavailable" || s.state === "unknown") return false;
+  const current = s.state.toLowerCase();
+  const states = r.states.map((x) => x.toLowerCase());
+  if (states.includes(current)) return true;
+  const n = s.state.trim() === "" ? NaN : Number(s.state);
+  if (Number.isFinite(n) && ((r.below !== null && n < r.below) || (r.above !== null && n > r.above))) return true;
+  if (!states.length && r.below === null && r.above === null) return (GLANCE_DEFAULTS[s.entity_id.split(".")[0]] || []).includes(current);
+  return false;
+};
 // Entities the doorbell screen's button can open (doorbell.ACTION_SERVICES).
 const DOORBELL_ACTION_DOMAINS = ["lock", "cover", "switch", "button", "input_button", "script"];
 
@@ -107,7 +128,8 @@ const toUnit = (value, from, to) => {
 const BINARY_WORDS = {
   door: ["Open", "Closed"], garage_door: ["Open", "Closed"], window: ["Open", "Closed"], opening: ["Open", "Closed"],
   motion: ["Detected", "Clear"], occupancy: ["Detected", "Clear"], presence: ["Detected", "Clear"],
-  moisture: ["Wet", "Dry"],
+  moisture: ["Wet", "Dry"], smoke: ["Detected", "Clear"], gas: ["Detected", "Clear"], carbon_monoxide: ["Detected", "Clear"],
+  battery: ["Low", "Normal"], heat: ["Hot", "Normal"], cold: ["Cold", "Normal"], lock: ["Unlocked", "Locked"],
 };
 
 const rectsOverlap = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
@@ -300,6 +322,7 @@ class Esp32ScreenPanel extends HTMLElement {
     this._newTile = null;
     this._iconPicker = false;
     if (!keepPage) this._error = null;
+    if (this._glance?.screen !== screenId) this._glance = null;
   }
 
   _nextId(prefix, used) {
@@ -539,7 +562,9 @@ class Esp32ScreenPanel extends HTMLElement {
     if (el.contains(this.shadowRoot.activeElement)) return;
     const pending = !this._screens.includes(screen);
     const st = { weather_entity: "", indoor_temperature_entity: "", language: "en", clock_24h: true,
-      doorbell_entity: "", doorbell_camera: "", doorbell_action: "", doorbell_timeout: 60, ...(screen.settings || {}) };
+      doorbell_entity: "", doorbell_camera: "", doorbell_action: "", doorbell_timeout: 60, photo_folder: "", attention: [],
+      ...(screen.settings || {}) };
+    if (!pending) this._fetchPhotoInfo(screen.screen_id, st.photo_folder);
     const states = Object.values(this._hass.states);
     const label = (s) => {
       const unit = s.attributes.unit_of_measurement || s.attributes.temperature_unit || "";
@@ -613,7 +638,9 @@ class Esp32ScreenPanel extends HTMLElement {
             ${[30, 60, 120, 300].map((s) => `<option value="${s}" ${Number(st.doorbell_timeout) === s ? "selected" : ""}>${s < 60 ? `${s} s` : `${s / 60} min`}</option>`).join("")}
           </select>
         </label>
-      </div>`;
+      </div>
+      ${this._photoSettings(st, pending)}
+      ${this._glanceSettings(st, pending, states, byName)}`;
     if (el._html === html) return;
     el._html = html;
     el.innerHTML = html;
@@ -621,11 +648,16 @@ class Esp32ScreenPanel extends HTMLElement {
 
   async _saveSetting(key, value) {
     const screen = this._screen();
-    if (!screen) return;
+    if (!screen) return false;
+    let ok = false;
     try {
       await this._hass.connection.sendMessagePromise({ type: "esp32_screen/screen/update", screen_id: screen.screen_id, settings: { [key]: value } });
       this._settingsNotice = "Saved";
       this._error = null;
+      ok = true;
+      // Shown right away: the screen list update follows.
+      screen.settings = { ...(screen.settings || {}), [key]: value };
+      if (key === "photo_folder") this._photoInfo = null;
     } catch (err) {
       this._error = err.message || String(err);
       this._settingsNotice = null;
@@ -633,6 +665,155 @@ class Esp32ScreenPanel extends HTMLElement {
     this._renderError();
     this.shadowRoot.activeElement?.blur?.();
     this._renderSettings();
+    return ok;
+  }
+
+  // ---- photo frame ------------------------------------------------------------
+
+  /** Ask HA where the screen's photo folder is and how many photos it has. */
+  _fetchPhotoInfo(screenId, folder) {
+    const key = `${screenId}|${folder}`;
+    if (this._photoInfo?.key === key || this._photoFetch === key) return;
+    this._photoFetch = key;
+    this._hass.connection
+      .sendMessagePromise({ type: "esp32_screen/photos", screen_id: screenId })
+      .then((info) => ({ key, ...info }))
+      .catch(() => ({ key, folder, path: "", count: null, media_dirs: {} }))
+      .then((info) => {
+        if (this._photoFetch === key) this._photoFetch = null;
+        this._photoInfo = info;
+        this._renderSettings();
+      });
+  }
+
+  _photoSettings(st, pending) {
+    const info = this._photoInfo?.key?.startsWith(`${this._sel}|`) ? this._photoInfo : null;
+    const dirs = info?.media_dirs || {};
+    const local = dirs.local || Object.values(dirs)[0] || "/media";
+    const others = Object.keys(dirs).filter((k) => k !== "local");
+    let status = "";
+    if (st.photo_folder && info && info.count !== null) {
+      status = info.count
+        ? `${info.count} photo${info.count === 1 ? "" : "s"}${info.path ? ` in <span class="mono">${esc(info.path)}</span>` : ""}`
+        : `No photos${info.path ? ` in <span class="mono">${esc(info.path)}</span>` : ""}`;
+    }
+    return `
+      <div class="settings-head">
+        <div class="side-title">Photo frame</div>
+        <span class="muted">Photos for the screensaver.</span>
+      </div>
+      <div class="settings-grid">
+        <label class="field">Photos folder
+          <input data-change="setting-photo_folder" value="${esc(st.photo_folder)}" placeholder="e.g. photos" maxlength="255" spellcheck="false" ${pending ? "disabled" : ""}>
+        </label>
+        <div class="field"><span class="photo-count">${status}</span></div>
+      </div>
+      <p class="muted small">A folder in Home Assistant's media folder (<span class="mono">${esc(local)}</span>), e.g. <span class="mono">photos</span>, subfolders included: JPEG, PNG and WebP.
+        ${others.length ? `Another media folder: its name, a colon and the folder, e.g. <span class="mono">${esc(others[0])}:photos</span>.` : ""}
+        Empty = no photos.</p>`;
+  }
+
+  // ---- at a glance ------------------------------------------------------------
+
+  /** The rules being edited: an unsaved draft, else the stored ones. */
+  _glanceRules(st) {
+    if (this._glance?.screen === this._sel) return this._glance.rules;
+    return (st.attention || []).map((r) => ({ entity_id: r.entity_id || "", label: r.label || "", states: [...(r.states || [])], below: r.below ?? null, above: r.above ?? null }));
+  }
+
+  _glanceSettings(st, pending, states, byName) {
+    const rules = this._glanceRules(st);
+    const order = [...Object.keys(GLANCE_DEFAULTS), "sensor"];
+    const domains = [...new Set(states.map((s) => s.entity_id.split(".")[0]))]
+      .sort((a, b) => (order.includes(a) ? order.indexOf(a) : 99) - (order.includes(b) ? order.indexOf(b) : 99) || a.localeCompare(b));
+    const options = (current) => {
+      const missing = current && !this._hass.states[current] ? `<option value="${esc(current)}" selected>${esc(current)} (not found)</option>` : "";
+      return missing + domains.map((d) => `<optgroup label="${esc(d)}">${states.filter((s) => s.entity_id.startsWith(`${d}.`)).sort(byName)
+        .map((s) => `<option value="${esc(s.entity_id)}" ${s.entity_id === current ? "selected" : ""}>${esc(s.attributes.friendly_name || s.entity_id)}</option>`).join("")}</optgroup>`).join("");
+    };
+    const dis = pending ? "disabled" : "";
+    const rows = rules.map((r, i) => {
+      const s = this._hass.states[r.entity_id];
+      const domain = r.entity_id.split(".")[0];
+      const defaults = GLANCE_DEFAULTS[domain];
+      const numeric = GLANCE_NUMERIC.includes(domain) || (s && s.state.trim() !== "" && Number.isFinite(Number(s.state))) || r.below !== null || r.above !== null;
+      const unit = s?.attributes.unit_of_measurement ? ` (${s.attributes.unit_of_measurement})` : "";
+      const valid = glanceValid(r);
+      const now = !r.entity_id ? "" : !valid ? `<span class="glance-bad">Give the states or a threshold</span>`
+        : glanceActive(r, s) ? `<span class="glance-on">Shows now</span>` : `<span class="muted">Not now (${esc(s ? s.state : "not found")})</span>`;
+      return `
+        <div class="glance-row">
+          <label class="field glance-entity">Entity
+            <select data-change="glance-entity" data-index="${i}" ${dis}>
+              <option value="" ${r.entity_id ? "" : "selected"}>Pick an entity</option>
+              ${options(r.entity_id)}
+            </select>
+          </label>
+          <label class="field">Label
+            <input data-change="glance-label" data-index="${i}" value="${esc(r.label)}" maxlength="${LIMITS.label}" placeholder="${esc(s?.attributes.friendly_name || "Entity name")}" ${dis}>
+          </label>
+          <label class="field">Shows when
+            <input data-change="glance-states" data-index="${i}" value="${esc(r.states.join(", "))}" spellcheck="false"
+              placeholder="${esc(defaults ? defaults.join(", ") : "e.g. home, on")}" ${dis}>
+          </label>
+          ${numeric ? `
+          <label class="field glance-num">Below${esc(unit)}
+            <input type="number" step="any" data-change="glance-below" data-index="${i}" value="${r.below ?? ""}" ${dis}>
+          </label>
+          <label class="field glance-num">Above${esc(unit)}
+            <input type="number" step="any" data-change="glance-above" data-index="${i}" value="${r.above ?? ""}" ${dis}>
+          </label>` : ""}
+          <button class="icon-btn danger" data-action="glance-remove" data-index="${i}" title="Remove" ${dis}><ha-icon icon="mdi:delete-outline"></ha-icon></button>
+          <div class="glance-now small">${now}</div>
+        </div>`;
+    }).join("");
+    return `
+      <div class="settings-head">
+        <div class="side-title">At a glance</div>
+        <span class="muted">A line on the screensaver with what needs attention: an open door, a light left on, a low battery. Up to 6 show.</span>
+      </div>
+      <div class="glance-list">${rows || `<p class="muted small">Nothing yet.</p>`}</div>
+      <div><button class="btn" data-action="glance-add" ${pending || rules.length >= GLANCE_MAX ? "disabled" : ""}><ha-icon icon="mdi:plus"></ha-icon> Add</button></div>
+      <p class="muted small">Empty "Shows when" uses the usual states: on for lights, switches and binary sensors (open doors, motion), open for covers, unlocked for locks, playing for media, triggered for alarms. Other entities, such as sensors, need states or a threshold.</p>`;
+  }
+
+  _editGlance(index, field, value) {
+    const screen = this._screen();
+    if (!screen) return;
+    const rules = this._glanceRules({ attention: screen.settings?.attention || [] }).map((r) => ({ ...r, states: [...r.states] }));
+    if (field === "add") {
+      if (rules.length < GLANCE_MAX) rules.push({ entity_id: "", label: "", states: [], below: null, above: null });
+    } else if (field === "remove") {
+      rules.splice(index, 1);
+    } else if (rules[index]) {
+      const r = rules[index];
+      if (field === "entity") r.entity_id = value;
+      if (field === "label") r.label = value.trim();
+      if (field === "states") r.states = glanceStates(value);
+      if (field === "below" || field === "above") r[field] = value === "" || !Number.isFinite(Number(value)) ? null : Number(value);
+    }
+    this._glance = { screen: screen.screen_id, rules };
+    this._saveGlance();
+  }
+
+  /** Save the complete rules; keep the draft while some still need input. */
+  async _saveGlance() {
+    const draft = this._glance;
+    if (!draft) return;
+    const complete = draft.rules.filter(glanceValid);
+    const stored = JSON.stringify(this._screen()?.settings?.attention || []);
+    const next = complete.map((r) => ({ entity_id: r.entity_id, label: r.label, states: r.states, below: r.below, above: r.above }));
+    if (JSON.stringify(next) === stored) {
+      if (complete.length === draft.rules.length) this._glance = null;
+      this.shadowRoot.activeElement?.blur?.();
+      this._renderSettings();
+      return;
+    }
+    const ok = await this._saveSetting("attention", next);
+    if (ok && this._glance === draft && complete.length === draft.rules.length) {
+      this._glance = null;
+      this._renderSettings();
+    }
   }
 
   _renderHead() {
@@ -1127,6 +1308,12 @@ class Esp32ScreenPanel extends HTMLElement {
         this._renderGrid();
         this._renderSide();
         break;
+      case "glance-add":
+        this._editGlance(-1, "add");
+        break;
+      case "glance-remove":
+        this._editGlance(Number(target.dataset.index), "remove");
+        break;
       case "delete-tile":
         if (!page) break;
         page.tiles = page.tiles.filter((t) => t.id !== this._selTile);
@@ -1220,8 +1407,13 @@ class Esp32ScreenPanel extends HTMLElement {
     }
     if (key.startsWith("setting-")) {
       const name = key.slice(8);
-      const value = name === "clock_24h" ? e.target.checked : name === "doorbell_timeout" ? Number(e.target.value) : e.target.value;
+      const value = name === "clock_24h" ? e.target.checked : name === "doorbell_timeout" ? Number(e.target.value)
+        : name === "photo_folder" ? e.target.value.trim() : e.target.value;
       this._saveSetting(name, value);
+      return;
+    }
+    if (key.startsWith("glance-")) {
+      this._editGlance(Number(e.target.dataset.index), key.slice(7), e.target.value);
       return;
     }
     const page = this._page();
@@ -1668,6 +1860,20 @@ const STYLE = `
   .settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; align-items: end; }
   .field.check .check-row { display: flex; align-items: center; gap: 6px; height: 36px; font-size: 14px; color: var(--primary-text-color); }
   .field.check input { width: 18px; height: 18px; }
+  .settings .small { margin: 0; line-height: 1.4; }
+  .photo-count { display: block; padding: 8px 0; font-size: 14px; color: var(--primary-text-color); }
+  .glance-list { display: flex; flex-direction: column; gap: 8px; }
+  .glance-row {
+    display: grid; grid-template-columns: minmax(180px, 2fr) minmax(120px, 1.2fr) minmax(120px, 1.2fr) repeat(2, minmax(70px, .6fr)) 36px;
+    gap: 8px; align-items: end; padding: 8px; border: 1px solid var(--line); border-radius: 8px;
+  }
+  .glance-row:not(:has(.glance-num)) { grid-template-columns: minmax(180px, 2fr) minmax(120px, 1.2fr) minmax(120px, 1.2fr) 36px; }
+  .glance-now { grid-column: 1 / -1; }
+  .glance-on { color: var(--accent); font-weight: 500; }
+  .glance-bad { color: var(--danger); }
+  @container page (max-width: 760px) {
+    .glance-row, .glance-row:not(:has(.glance-num)) { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  }
   .side p { margin: 0; line-height: 1.4; }
   .side { display: flex; flex-direction: column; gap: 12px; border-left: 1px solid var(--line); padding-left: 16px; min-width: 0; }
   .side-title { font-weight: 500; font-size: 16px; }

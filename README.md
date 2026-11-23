@@ -38,13 +38,33 @@ Assistant.
    Wi-Fi signal next to the gear icon, which opens settings: change or forget
    Wi-Fi, sign out of Home Assistant, and the screensaver.
 4. **Screensaver (optional).** A plain clock or a flip clock with the date,
-   a 7-day weather forecast, or both taking turns every 10, 20, 30 or 60
-   seconds. It starts after 1, 5 or 15 minutes without touches on the
+   a 7-day weather forecast, photos, or any of them taking turns every 10,
+   20, 30 or 60 seconds. It starts after 1, 5 or 15 minutes without touches on the
    dashboard, with the backlight dimmed. The clock can show the weather and
    an indoor temperature, in English or Portuguese, with a 12- or 24-hour
    clock. The forecast comes from the weather entity picked for the screen.
    Weather icons are simple line icons or colour ones (Settings ›
-   Screensaver › Weather icons). The touch that wakes
+   Screensaver › Weather icons).
+   - **Photos** come from a folder in Home Assistant's media folder (picked
+     per screen), which Home Assistant sizes for the screen, or else from a
+     `photos` folder on the SD card (JPEG, not progressive). Each new photo
+     fades in. On the S3 board, photos show smaller than the screen when
+     there isn't enough free memory for full-size ones.
+   - **At a glance:** under the clock (and in a corner of the photos), what
+     needs attention, from rules set per screen in Home Assistant: a door
+     left open, a low battery, a washing machine that finished.
+   - **Prevent burn-in** moves the clock and the forecast by a few pixels
+     every minute, so a clock shown for hours leaves no shadow.
+   - **Night** (Settings › Night): from sunset to sunrise or between set
+     hours, the idle screen shows only the clock, dimmed to the minimum or in
+     dim red, or turns off. This works even with no screensaver chosen.
+   - **Wake on motion** (ESP32-P4 board, with its camera): someone moving in
+     front of the screen wakes it from the screensaver; after 10 minutes
+     without anyone around, the screen turns off. The camera's frames are
+     only reduced to a 32x18 brightness grid on the screen; no picture is
+     kept or sent.
+
+   The touch that wakes
    the screen doesn't press anything. Time comes from NTP and the timezone
    from Home Assistant. Backlight and screensaver can also be controlled from
    Home Assistant.
@@ -97,7 +117,9 @@ also removes the PIN).
 | `src/logic/` | Code without hardware dependencies (clock text, touch filter, URLs), tested on a computer |
 | `src/sd.rs` | microSD card on SPI, mounted as FAT at `/sdcard` |
 | `src/icons.rs` | The page and light tile icons the firmware can draw (must match the editor's lists) |
-| `src/saver.rs` | Screensaver: idle timer, clock digits, flip animation, settings |
+| `src/saver.rs` | Screensaver: idle timer, clock digits, flip animation, photos, night mode, settings |
+| `src/photos.rs` | Screensaver photos from the SD card |
+| `src/camera.rs`, `components/board_p4/` | ESP32-P4 board: SD card and camera helpers in C, the OV02C10 camera driver (from Guition's package, Apache 2.0) |
 | `ui/board/<mcu>/` | Pictures drawn at each board's own pixel size: clock digits (`scripts/gen_clock_digits.py`) and colour weather icons (`scripts/gen_weather_icons.py`, from `ui/weather-svg/`). The software renderer scales pictures without smoothing, so scaled ones look jagged |
 | `ui/*.slint` | All screens ([Slint](https://slint.dev), software renderer) |
 | `docs/protocol.md` | Contract between the firmware and the integration |
@@ -211,7 +233,13 @@ and streams tile states to the screens. The contract with the firmware is
    to resize, then press **Save**. Connected screens update right away.
    Under **Screen settings**, pick a weather entity and an indoor temperature
    sensor for the clock screensaver, the language (English or Portuguese) and
-   12- or 24-hour time.
+   12- or 24-hour time. **Photos folder** is a folder in Home Assistant's
+   media folder (`/media` in Docker, else `<config>/media`), for example
+   `photos`, subfolders included (JPEG, PNG, WebP); another media folder is
+   written `name:folder`. **At a glance** takes up to 8 rules (an entity, an
+   optional label, the states that show it, or below/above for numbers); the
+   screensaver shows up to 6 that apply. With no states given, the usual ones
+   apply: on, open, unlocked, playing, triggered.
    Tile kinds are light, gate, garage, valve, climate, toggle, scene, sensor,
    blind, lock, alarm and media. A toggle tile enables or disables an automation,
    or switches an input_boolean or switch. A scene tile runs a scene, script or
@@ -232,7 +260,8 @@ and can stay up for a number of seconds or until it is dismissed with
 camera picture with a 60 s timeout.
 
 **Copying a screen.** **Copy from…** next to Save gives the selected screen
-another screen's layout and screen settings (its name stays), for example to
+another screen's layout and screen settings, including the photos folder and
+the At a glance rules (its name stays), for example to
 set up a second screen like the first.
 
 **Doorbell.** Under **Screen settings › Doorbell**, pick what rings (an
@@ -258,6 +287,7 @@ images can stay in the folder. Remove an image to stop offering it. See
 homeassistant/dev/run-ha.sh                                  # HA in Docker, port 8123, demo entities, test RTSP doorbell camera
 uv run --with aiohttp homeassistant/dev/onboard.py           # owner + non-admin screen user, random passwords
 uv run --with aiohttp homeassistant/tests/e2e.py             # protocol end-to-end test (uses device_sim.py)
+uv run homeassistant/tests/unit.py                           # integration unit tests (run inside the dev container)
 uv run --with aiohttp homeassistant/tests/device_sim.py --interactive   # simulated screen AABBCCDDEEFF
 uv run --with aiohttp homeassistant/tests/device_sim.py --ota apply --sw-version 0.1.0 --duration 600  # accepts updates
 uv run --with aiohttp --with playwright homeassistant/tests/panel_browser.py  # editor in Chromium, /tmp/ha-editor-*.png
@@ -275,10 +305,12 @@ another interface may never reach the screen.
 The integration is bind-mounted read-only into the container. After a change,
 run `docker restart esp32-screen-ha`. Config and state live in
 `homeassistant/dev-config/`, which git ignores. Firmware images for the dev
-instance go in `homeassistant/dev-config/esp32_screen/firmware/`.
+instance go in `homeassistant/dev-config/esp32_screen/firmware/`;
+`homeassistant/dev-config/media` is the dev instance's `dev` media folder,
+which `e2e.py` fills with test photos.
 
-CI (`.github/workflows/integration.yml`) runs ruff, hassfest, the HACS check and
-`e2e.py` against a fresh Home Assistant in Docker. Run `uvx ruff check
+CI (`.github/workflows/integration.yml`) runs ruff, hassfest, the HACS check,
+the unit tests and `e2e.py` against a fresh Home Assistant in Docker. Run `uvx ruff check
 custom_components homeassistant` locally before pushing.
 `.github/workflows/firmware.yml` runs the host tests and builds the release
 image, which it keeps as a build artifact.
@@ -288,6 +320,9 @@ image, which it keeps as a build artifact.
 - **Slint licence.** Slint is GPLv3, or royalty-free for desktop, mobile and
   web, or commercial. Embedded devices are not covered by the royalty-free
   licence. Check this before shipping the firmware outside the GPL.
+- **Camera driver.** `components/board_p4/ov02c10/` is Espressif's OV02C10
+  driver from Guition's demo package (Apache License 2.0): the component
+  registry has none for this sensor.
 - **Weather icons.** The colour set is
   [Meteocons](https://github.com/basmilius/weather-icons) by Bas Milius (MIT
   licence, see `ui/weather-svg/LICENSE-meteocons.txt`).

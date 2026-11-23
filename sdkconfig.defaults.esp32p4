@@ -33,3 +33,18 @@ CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE=y
 # ESP-IDF 5.5.6's bootloader is just over the 24 KB that fit before the
 # partition table (0x2000-0x8000 on the P4); fewer log strings bring it back.
 CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
+
+# ---- Camera (OV02C10, MIPI-CSI; SCCB on the touch I2C bus, GPIO7/8) ----
+# Only for waking the screen on motion: the smallest mode is plenty.
+CONFIG_CAMERA_OV02C10=y
+CONFIG_CAMERA_OV02C10_AUTO_DETECT_MIPI_INTERFACE_SENSOR=y
+CONFIG_CAMERA_OV02C10_MIPI_RAW10_1288X728_30FPS=y
+CONFIG_CAMERA_OV02C10_MIPI_DEFAULT_FMT_RAW10_1288X728_30FPS=y
+CONFIG_CAMERA_OV02C10_DEFAULT_IPA_JSON_CONFIGURATION_FILE=y
+CONFIG_ESP_VIDEO_ENABLE_MIPI_CSI_VIDEO_DEVICE=y
+CONFIG_ESP_VIDEO_ENABLE_ISP=y
+CONFIG_ESP_VIDEO_ENABLE_ISP_PIPELINE_CONTROLLER=y
+# Touch uses the new I2C master driver (shared with the camera). esp-idf-hal
+# still links the old driver's code, whose start-up check would abort; on
+# this board nothing installs the old driver.
+CONFIG_I2C_SKIP_LEGACY_CONFLICT_CHECK=y

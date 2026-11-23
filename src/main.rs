@@ -9,6 +9,8 @@
 
 mod app;
 mod board;
+#[cfg(esp32p4)]
+mod camera;
 mod console;
 mod display;
 mod ha;
@@ -16,6 +18,7 @@ mod icons;
 mod lock;
 mod logic;
 mod ota;
+mod photos;
 mod saver;
 mod sd;
 mod touch;
@@ -125,6 +128,16 @@ fn main() -> anyhow::Result<()> {
         ota::update_from_sd(update_tx);
     }
     let saver = saver::Saver::new(nvs, &ui);
+    let sd_photos = sd_card
+        .as_ref()
+        .and_then(|_| photos::SdPhotos::start(sd::MOUNT_POINT));
+    if let Some(photos) = &sd_photos {
+        saver.borrow_mut().set_sd_photos(photos.count(), &ui);
+    }
+    #[cfg(esp32p4)]
+    let camera = camera::Camera::start();
+    #[cfg(esp32p4)]
+    let mut last_level: Option<u8> = None;
     // Network time, started once Wi-Fi is up so the first request isn't lost
     // (lwIP waits a long time before retrying). The timezone comes from Home
     // Assistant (see ha/mod.rs).
@@ -400,7 +413,43 @@ fn main() -> anyhow::Result<()> {
                 Err(e) => log::warn!("SNTP: {e}"),
             }
         }
+        // ---- Screensaver photos
+        let request = saver.borrow_mut().take_photo_request();
+        if let Some(request) = request {
+            match (request.source, &sd_photos) {
+                (saver::PhotoSource::HomeAssistant, _) => {
+                    app.request_photo(request.target.0, request.target.1)
+                }
+                (saver::PhotoSource::SdCard, Some(photos)) => {
+                    photos.request(request.target, request.max_pixels)
+                }
+                (saver::PhotoSource::SdCard, None) => {}
+            }
+        }
+        let photo = app
+            .take_photo()
+            .or_else(|| sd_photos.as_ref().and_then(|p| p.results.try_recv().ok()));
+        if let Some(photo) = photo {
+            saver.borrow_mut().photo_arrived(photo, &ui);
+        }
         saver.borrow_mut().tick(&ui, &mut backlight);
+        // ---- Camera: wake on motion
+        #[cfg(esp32p4)]
+        {
+            while let Ok(event) = camera.events.try_recv() {
+                match event {
+                    camera::Event::Ready(ok) => saver.borrow_mut().set_camera(ok, &ui),
+                    camera::Event::Motion => saver.borrow_mut().on_motion(&ui, &mut backlight),
+                }
+            }
+            camera.set_wanted(saver.borrow().motion_wanted());
+            let level = saver.borrow().backlight_level();
+            if last_level.is_some_and(|l| l != level) {
+                // The screen's own light changed what the camera sees.
+                camera.reset();
+            }
+            last_level = Some(level);
+        }
         let language = saver.borrow_mut().take_language_changed();
         if let Some(portuguese) = language {
             app.set_language(portuguese);

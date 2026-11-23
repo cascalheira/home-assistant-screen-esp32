@@ -244,6 +244,43 @@ pub const PT: &[(&str, &str)] = &[
     ("Now: light.", "Agora: claro."),
     ("Now: dark.", "Agora: escuro."),
     ("Dark until the time is known.", "Escuro até se saber a hora."),
+    ("No photos", "Sem fotografias"),
+    (
+        "This screen doesn't have enough free memory for photos.",
+        "Este ecrã não tem memória livre suficiente para fotografias.",
+    ),
+    ("{} photos from Home Assistant.", "{} fotografias do Home Assistant."),
+    ("{} photos from the SD card.", "{} fotografias do cartão SD."),
+    (
+        "No photos yet. Choose a photo folder for this screen in Home Assistant, or put JPEG photos in a folder called photos on the SD card.",
+        "Ainda não há fotografias. Escolha uma pasta de fotografias para este ecrã no Home Assistant, ou ponha fotografias JPEG numa pasta chamada photos no cartão SD.",
+    ),
+    (
+        "The screensaver looks the same day and night.",
+        "A proteção de ecrã é igual de dia e de noite.",
+    ),
+    (
+        "From {} to {} until Home Assistant sends sunset and sunrise.",
+        "Das {} às {}, até o Home Assistant enviar o pôr e o nascer do sol.",
+    ),
+    ("From {} to {}.", "Das {} às {}."),
+    (
+        "When nobody uses the screen, it shows only the clock, as dim as it goes.",
+        "Quando ninguém usa o ecrã, mostra só o relógio, com o mínimo de brilho.",
+    ),
+    (
+        "When nobody uses the screen, it shows only the clock, in dim red.",
+        "Quando ninguém usa o ecrã, mostra só o relógio, em vermelho ténue.",
+    ),
+    (
+        "When nobody uses the screen, it turns off. A touch turns it on.",
+        "Quando ninguém usa o ecrã, desliga-se. Um toque volta a ligá-lo.",
+    ),
+    (
+        "Wakes the screen when someone moves in front of it. After 10 minutes without anyone around, the screensaver turns the screen off. The camera's pictures never leave the screen and are not stored.",
+        "Acorda o ecrã quando alguém se mexe à frente dele. Após 10 minutos sem ninguém por perto, a proteção de ecrã desliga o ecrã. As imagens da câmara nunca saem do ecrã e não são guardadas.",
+    ),
+    ("The camera isn't working.", "A câmara não está a funcionar."),
     ("{} free of {}", "{} livres de {}"),
     ("Mounted", "Montado"),
     ("None (insert one and restart)", "Nenhum (insira um e reinicie)"),

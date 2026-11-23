@@ -1,6 +1,6 @@
 # Components for the ESP32-P4 board only: Wi-Fi through the ESP32-C6
 # (ESP-Hosted over SDIO, with esp_wifi_remote providing the esp_wifi API) and
-# the JD9165 MIPI-DSI panel driver.
+# the JD9165 MIPI-DSI panel driver, and the camera (esp_video).
 dependencies:
   espressif/esp_wifi_remote:
     version: ">=0.10"
@@ -12,5 +12,10 @@ dependencies:
       - if: "target in [esp32p4]"
   espressif/esp_lcd_jd9165:
     version: "^2.0.2"
+    rules:
+      - if: "target in [esp32p4]"
+  # The camera (OV02C10 on MIPI-CSI), for waking the screen on motion.
+  espressif/esp_video:
+    version: "^2"
     rules:
       - if: "target in [esp32p4]"
