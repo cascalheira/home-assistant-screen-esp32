@@ -34,6 +34,8 @@ const NVS_WEATHER: &str = "saver_wx";
 const NVS_ROTATE: &str = "saver_rot";
 const NVS_THEME: &str = "theme";
 const NVS_SAVER_THEME: &str = "saver_theme";
+/// Colour weather icons on the screensaver (1) or monochrome ones (0).
+const NVS_COLOUR_ICONS: &str = "saver_icons";
 /// The screen's language: 0 = Home Assistant's setting, 1 English, 2 Portuguese.
 const NVS_UI_LANGUAGE: &str = "ui_lang";
 const NVS_SUNRISE: &str = "sunrise";
@@ -176,6 +178,7 @@ pub struct Saver {
     sun_times: Option<(i32, i32)>,
     /// The screensaver's theme setting.
     saver_theme: ThemeMode,
+    colour_icons: bool,
     /// Language setting (see NVS_UI_LANGUAGE); `portuguese` is HA's.
     ui_language: u8,
     /// The language applied to the UI (None until first applied).
@@ -230,6 +233,7 @@ impl Saver {
         let theme = ThemeMode::from_u8(u8_or(NVS_THEME, ThemeMode::Dark as u8));
         let saver_theme = ThemeMode::from_u8(u8_or(NVS_SAVER_THEME, ThemeMode::Dark as u8));
         let ui_language = u8_or(NVS_UI_LANGUAGE, 0).min(2);
+        let colour_icons = u8_or(NVS_COLOUR_ICONS, 0) == 1;
         let u16_of = |key| nvs.as_ref().and_then(|n| n.get_u16(key).ok().flatten());
         let sun_times = u16_of(NVS_SUNRISE)
             .zip(u16_of(NVS_SUNSET))
@@ -255,6 +259,7 @@ impl Saver {
             theme,
             saver_theme,
             ui_language,
+            colour_icons,
             language_shown: None,
             language_changed: None,
             sun_up: None,
@@ -277,6 +282,17 @@ impl Saver {
         saver.borrow().show_settings(ui);
         saver.borrow_mut().apply_theme(ui);
         saver.borrow_mut().apply_language(ui);
+        let weak = ui.as_weak();
+        let s = saver.clone();
+        ui.on_saver_colour_icons_picked(move |index| {
+            let mut s = s.borrow_mut();
+            s.colour_icons = index == 1;
+            let value = s.colour_icons as u8;
+            s.save_u8(NVS_COLOUR_ICONS, value);
+            if let Some(ui) = weak.upgrade() {
+                s.show_settings(&ui);
+            }
+        });
         let weak = ui.as_weak();
         let s = saver.clone();
         ui.on_display_language_picked(move |index| {
@@ -355,6 +371,8 @@ impl Saver {
         ui.set_display_brightness_live(brightness as i32);
         ui.set_display_theme(self.theme as i32);
         ui.set_saver_theme(self.saver_theme as i32);
+        ui.set_saver_colour_icons(self.colour_icons);
+        ui.global::<crate::SaverTheme>().set_colour_icons(self.colour_icons);
         ui.set_display_language(self.ui_language as i32);
         let index = ROTATE_OPTIONS.iter().position(|&s| s == self.rotate_secs);
         ui.set_saver_rotate(index.map(|i| i as i32).unwrap_or(-1));

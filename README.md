@@ -42,7 +42,9 @@ Assistant.
    seconds. It starts after 1, 5 or 15 minutes without touches on the
    dashboard, with the backlight dimmed. The clock can show the weather and
    an indoor temperature, in English or Portuguese, with a 12- or 24-hour
-   clock. The forecast comes from the weather entity picked for the screen. The touch that wakes
+   clock. The forecast comes from the weather entity picked for the screen.
+   Weather icons are simple line icons or colour ones (Settings ›
+   Screensaver › Weather icons). The touch that wakes
    the screen doesn't press anything. Time comes from NTP and the timezone
    from Home Assistant. Backlight and screensaver can also be controlled from
    Home Assistant.
@@ -96,7 +98,7 @@ also removes the PIN).
 | `src/sd.rs` | microSD card on SPI, mounted as FAT at `/sdcard` |
 | `src/icons.rs` | The page and light tile icons the firmware can draw (must match the editor's lists) |
 | `src/saver.rs` | Screensaver: idle timer, clock digits, flip animation, settings |
-| `ui/clock/*.png` | Clock digits, rendered by `scripts/gen_clock_digits.py` |
+| `ui/board/<mcu>/` | Pictures drawn at each board's own pixel size: clock digits (`scripts/gen_clock_digits.py`) and colour weather icons (`scripts/gen_weather_icons.py`, from `ui/weather-svg/`). The software renderer scales pictures without smoothing, so scaled ones look jagged |
 | `ui/*.slint` | All screens ([Slint](https://slint.dev), software renderer) |
 | `docs/protocol.md` | Contract between the firmware and the integration |
 | `custom_components/esp32_screen/` | The Home Assistant integration and its editor panel |
@@ -286,6 +288,9 @@ image, which it keeps as a build artifact.
 - **Slint licence.** Slint is GPLv3, or royalty-free for desktop, mobile and
   web, or commercial. Embedded devices are not covered by the royalty-free
   licence. Check this before shipping the firmware outside the GPL.
+- **Weather icons.** The colour set is
+  [Meteocons](https://github.com/basmilius/weather-icons) by Bas Milius (MIT
+  licence, see `ui/weather-svg/LICENSE-meteocons.txt`).
 - **Fonts.** Inter (SIL Open Font License) and Material Design Icons
   (Pictogrammers Free License), see `ui/fonts/`. Glyphs are embedded as
   signed distance fields: one per character, scaled to any font size, so

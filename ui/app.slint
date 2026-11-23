@@ -259,6 +259,7 @@ export component AppWindow inherits Window {
     in property <int> saver-mode; // 0 off, 1 clock, 2 flip clock
     in property <int> saver-delay; // index into the delay options
     in property <int> saver-theme: 2; // 0 auto, 1 light, 2 dark
+    in property <bool> saver-colour-icons; // colour weather icons
     in property <bool> saver-active;
     in property <bool> saver-flip;
     in property <bool> saver-weather; // forecast screensaver on
@@ -329,6 +330,7 @@ export component AppWindow inherits Window {
     callback saver-delay-picked(int);
     callback saver-weather-picked(int);
     callback saver-theme-picked(int);
+    callback saver-colour-icons-picked(int);
     callback display-brightness-changed(int); // while dragging
     callback display-brightness-committed(int); // on release
     callback display-theme-picked(int);
@@ -1102,7 +1104,6 @@ export component AppWindow inherits Window {
                     if root.settings-section == 3: VerticalLayout {
                         padding: 22px;
                         spacing: 14px;
-                        SectionTitle { text: @tr("Screensaver"); }
                         SettingRow {
                             label: @tr("Clock");
                             Segmented {
@@ -1117,6 +1118,14 @@ export component AppWindow inherits Window {
                                 options: [@tr("Off"), @tr("7 days")];
                                 selected: root.saver-weather ? 1 : 0;
                                 picked(i) => { root.saver-weather-picked(i); }
+                            }
+                        }
+                        SettingRow {
+                            label: @tr("Weather icons");
+                            Segmented {
+                                options: [@tr("Simple"), @tr("Colour")];
+                                selected: root.saver-colour-icons ? 1 : 0;
+                                picked(i) => { root.saver-colour-icons-picked(i); }
                             }
                         }
                         SettingRow {

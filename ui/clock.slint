@@ -1,16 +1,20 @@
 // Screensaver clock: a plain clock or a flip clock.
 //
-// Digits are images (ui/clock/*.png, made by scripts/gen_clock_digits.py),
+// Digits are images (ui/board/<chip>/clock/*.png, made by
+// scripts/gen_clock_digits.py),
 // not text. They date from before the UI used SDF fonts, when a 200 px font
 // would have cost megabytes of flash. Single-colour images are stored as
 // alpha maps and can be scaled, which the flip animation relies on.
 
 import { Icons } from "dashboard.slint";
+import { BoardArt } from "@board";
 import { ForecastDayView } from "types.slint";
 
 // Screensaver colours: dark or light, set from Rust (its own theme setting).
 export global SaverTheme {
     in-out property <bool> dark: true;
+    // Colour weather icons (images) instead of the monochrome glyphs.
+    in-out property <bool> colour-icons: false;
     out property <color> bg: root.dark ? #000000 : #eef0f4;
     out property <color> ink: root.dark ? #e9ecf2 : #151a23;
     out property <color> muted: root.dark ? #8b93a3 : #5b6474;
@@ -72,21 +76,11 @@ export global ClockGlyphs {
         return "\u{F05D6}";
     }
 
-    out property <[image]> digits: [
-        @image-url("clock/0.png"),
-        @image-url("clock/1.png"),
-        @image-url("clock/2.png"),
-        @image-url("clock/3.png"),
-        @image-url("clock/4.png"),
-        @image-url("clock/5.png"),
-        @image-url("clock/6.png"),
-        @image-url("clock/7.png"),
-        @image-url("clock/8.png"),
-        @image-url("clock/9.png"),
-    ];
-    // Size of the digit images.
-    out property <length> w: 148px;
-    out property <length> h: 167px;
+    // Digit images at this board's pixel size (ui/board/<chip>/board.slint):
+    // the software renderer scales images without smoothing.
+    out property <[image]> digits: BoardArt.digits;
+    out property <length> w: BoardArt.digit-w;
+    out property <length> h: BoardArt.digit-h;
 }
 
 // One flip-clock card.
@@ -278,12 +272,18 @@ export component ScreenSaver inherits Rectangle {
             spacing: 40px;
             if root.weather-temperature != "": HorizontalLayout {
                 spacing: 10px;
-                Text {
+                if !SaverTheme.colour-icons: Text {
                     text: ClockGlyphs.weather-icon(root.weather-condition);
                     font-family: Icons.family;
                     font-size: 28px;
                     color: SaverTheme.muted;
                     vertical-alignment: center;
+                }
+                if SaverTheme.colour-icons: Image {
+                    source: BoardArt.weather-small(root.weather-condition);
+                    width: 36px;
+                    height: 36px;
+                    y: (parent.height - self.height) / 2;
                 }
                 Text {
                     text: root.weather-temperature;
@@ -338,12 +338,20 @@ export component ForecastView inherits Rectangle {
         spacing: 22px;
         HorizontalLayout {
             spacing: 18px;
-            if root.weather-temperature != "": Text {
+            if root.weather-temperature != "" && !SaverTheme.colour-icons: Text {
                 text: ClockGlyphs.weather-icon(root.weather-condition);
                 font-family: Icons.family;
                 font-size: 48px;
                 color: root.ink;
                 vertical-alignment: center;
+            }
+            if root.weather-temperature != "" && SaverTheme.colour-icons: VerticalLayout {
+                alignment: center;
+                Image {
+                    source: BoardArt.weather-large(root.weather-condition);
+                    width: 64px;
+                    height: 64px;
+                }
             }
             VerticalLayout {
                 alignment: center;
@@ -407,12 +415,20 @@ export component ForecastView inherits Rectangle {
                         horizontal-alignment: center;
                     }
                     Rectangle { vertical-stretch: 1; }
-                    Text {
+                    if !SaverTheme.colour-icons: Text {
                         text: ClockGlyphs.weather-icon(day.condition);
                         font-family: Icons.family;
                         font-size: 48px;
                         color: root.ink;
                         horizontal-alignment: center;
+                    }
+                    if SaverTheme.colour-icons: HorizontalLayout {
+                        alignment: center;
+                        Image {
+                            source: BoardArt.weather-large(day.condition);
+                            width: 64px;
+                            height: 64px;
+                        }
                     }
                     Rectangle { vertical-stretch: 1; }
                     Text {

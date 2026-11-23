@@ -288,3 +288,12 @@ msgstr "↻  Procurar de novo"
 
 msgid "↻  Search again"
 msgstr "↻  Procurar de novo"
+
+msgid "Weather icons"
+msgstr "Ícones do tempo"
+
+msgid "Simple"
+msgstr "Simples"
+
+msgid "Colour"
+msgstr "Cor"
