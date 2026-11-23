@@ -99,6 +99,21 @@ fn reset_learns_the_room_again() {
 }
 
 #[test]
+fn a_small_change_like_camera_noise_is_not_motion() {
+    // 20 scattered cells changing every frame: about what a still room
+    // showed on the real camera.
+    let mut d = settled();
+    for frame in 0..20u32 {
+        let mut grid = room(400 + frame, 0);
+        for k in 0..20usize {
+            let i = (k * 29 + frame as usize * 7) % grid.len();
+            grid[i] = grid[i].saturating_add(40);
+        }
+        assert!(!d.feed(&grid), "frame {frame}");
+    }
+}
+
+#[test]
 fn a_wrong_size_grid_is_ignored() {
     let mut d = settled();
     assert!(!d.feed(&[0; 10]));

@@ -57,6 +57,9 @@ pub enum ConsoleCommand {
     /// Clear LCD image retention: full-screen white and colours for N
     /// minutes, then restart.
     PanelRefresh(u32),
+    /// P4 board: turn the panel off properly before flashing (see
+    /// `display::panel_off`); scripts/flash.sh sends it.
+    PanelOff,
     Forget,
 }
 
@@ -137,6 +140,7 @@ pub fn start(tx: Sender<ConsoleCommand>) {
                     }
                     "page" => ConsoleCommand::Page(arg.to_string()),
                     "pattern" => ConsoleCommand::Pattern(arg.trim().parse().unwrap_or(0)),
+                    "paneloff" => ConsoleCommand::PanelOff,
                     "panelrefresh" => {
                         ConsoleCommand::PanelRefresh(arg.trim().parse().unwrap_or(30).clamp(1, 600))
                     }

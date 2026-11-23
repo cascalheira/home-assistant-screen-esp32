@@ -11,8 +11,10 @@ pub const ROWS: usize = 18;
 const CELLS: usize = COLS * ROWS;
 /// A cell changed when its brightness moved more than this (0-255).
 const CELL_DELTA: i32 = 18;
-/// Cells that must change: about 2% of the picture.
-const MIN_CELLS: usize = 12;
+/// Cells that must change: about 5% of the picture. A still room under
+/// lamps measured up to 17 (noise); someone a few metres away covers far
+/// more.
+const MIN_CELLS: usize = 32;
 /// Frames used to learn the background after a (re)start (the camera's
 /// auto exposure settles meanwhile).
 const SETTLE_FRAMES: u32 = 15;

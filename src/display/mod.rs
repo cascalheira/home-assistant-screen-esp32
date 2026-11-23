@@ -14,7 +14,7 @@ mod dsi;
 #[cfg(esp32s3)]
 mod rgb;
 #[cfg(esp32p4)]
-pub use dsi::Display;
+pub use dsi::{panel_off, Display};
 #[cfg(esp32s3)]
 pub use rgb::Display;
 

@@ -12,7 +12,7 @@
 
 use core::ffi::c_void;
 use core::ptr;
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicPtr, Ordering};
 use std::time::{Duration, Instant};
 
 use esp_idf_svc::sys::board_p4 as b;
@@ -31,6 +31,34 @@ unsafe extern "C" fn on_frame_buffer_switched(
 ) -> bool {
     FRAMES_STARTED.fetch_add(1, Ordering::Release);
     false
+}
+
+/// The panel's command channel, for `panel_off` (also from the restart
+/// handler, which has no `Display`).
+static PANEL_IO: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
+
+/// Turns the panel off properly: display off, then sleep. Without the video
+/// stream (restarting, flashing) an LCD left on holds a one-sided charge on
+/// its liquid crystal, which shows as flickering edges for a while after it
+/// starts again. Blocks about 150 ms.
+pub fn panel_off() {
+    let io = PANEL_IO.load(Ordering::Acquire);
+    if io.is_null() {
+        return;
+    }
+    unsafe {
+        // The backlight first, so nothing shows while the panel goes off.
+        sys::ledc_stop(sys::ledc_mode_t_LEDC_LOW_SPEED_MODE, 0, 0);
+        sys::esp_lcd_panel_io_tx_param(io.cast(), 0x28, ptr::null(), 0); // DISPOFF
+        sys::esp_rom_delay_us(20_000);
+        sys::esp_lcd_panel_io_tx_param(io.cast(), 0x10, ptr::null(), 0); // SLPIN
+        sys::esp_rom_delay_us(120_000);
+    }
+}
+
+/// Runs on every software restart (firmware updates, the console).
+unsafe extern "C" fn on_shutdown() {
+    panel_off();
 }
 
 pub struct Display {
@@ -125,6 +153,8 @@ impl Display {
             esp!(b::esp_lcd_new_panel_jd9165(io, &dev_config, &mut panel))?;
             esp!(sys::esp_lcd_panel_reset(panel.cast()))?;
             esp!(sys::esp_lcd_panel_init(panel.cast()))?;
+            PANEL_IO.store(io.cast(), Ordering::Release);
+            esp!(sys::esp_register_shutdown_handler(Some(on_shutdown)))?;
 
             let callbacks = b::esp_lcd_dpi_panel_event_callbacks_t {
                 __bindgen_anon_1: b::esp_lcd_dpi_panel_event_callbacks_t__bindgen_ty_1 {

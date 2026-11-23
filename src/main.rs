@@ -347,6 +347,11 @@ fn main() -> anyhow::Result<()> {
                     println!("panel refresh done, restarting");
                     unsafe { esp_idf_svc::sys::esp_restart() };
                 }
+                ConsoleCommand::PanelOff => {
+                    #[cfg(esp32p4)]
+                    display::panel_off();
+                    println!("PANEL OFF");
+                }
                 ConsoleCommand::Pattern(kind) => {
                     #[cfg(esp32p4)]
                     display.test_pattern(kind);
